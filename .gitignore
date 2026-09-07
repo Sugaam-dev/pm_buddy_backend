@@ -1,0 +1,110 @@
+# ================================
+# PM Buddy Backend - FastAPI/Python
+# ================================
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Package/build files
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Type checking / linting
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.pylint.d/
+
+# Logs
+*.log
+logs/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local uploads / generated files
+uploads/
+reports/
+generated/
+storage/
+
+# Local vector / embedding data
+chroma/
+chroma_db/
+vector_store/
+embeddings/
+
+# Supabase local development
+.supabase/
+
+# Docker local data
+.docker/
+docker-data/
+docker-volumes/
+
+# Secrets / credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.token
+*.secret
+*.credentials
+
+# Service account credentials
+service-account*.json
+*-service-account.json
+
+# Local AI files
+.ai/
+.ai-cache/
+.agent-cache/

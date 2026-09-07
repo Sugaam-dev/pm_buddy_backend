@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Fallback/Direct Gemini API key
 DEFAULT_GEMINI_KEY = ""
 default_gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None) or DEFAULT_GEMINI_KEY
+default_gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None) or DEFAULT_GEMINI_KEY
 
 PM_BUDDY_SYSTEM_PROMPT = (
     "You are PM Buddy, an AI Operational Intelligence and Governance partner for engineering teams. "

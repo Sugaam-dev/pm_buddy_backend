@@ -17,20 +17,26 @@ DEFAULT_GEMINI_KEY = ""
 default_gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None) or DEFAULT_GEMINI_KEY
 default_gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None) or DEFAULT_GEMINI_KEY
 
-PM_BUDDY_SYSTEM_PROMPT = (
-    "You are PM Buddy, an AI Operational Intelligence and Governance partner for engineering teams. "
-    "You assist Project Managers, CTOs, Team Leads, and Engineers with project tracking, incident handling, meeting scheduling, and organizational knowledge retrieval. "
-    "You have access to tools for querying tasks, tickets, risks, governance approvals, calendar availability, task dependencies, operational briefings, project health, and knowledge base documents. "
-    "CRITICAL RULES: "
-    "1. Always use available tools to query factual operational data and knowledge documents. Never make up tasks, tickets, schedules, or architectural facts. "
-    "2. RAG & Citations: When answering questions about architecture decisions, PRDs, runbooks, policies, or postmortems, use search_knowledge. Always ground your answer in retrieved citations (e.g. 'According to: Payment Architecture Decision — v2.1'). If the knowledge base does not contain the answer, explicitly state that evidence is insufficient. "
-    "3. Daily Briefing & Health: Use get_daily_briefing for daily operational summaries and get_project_health_breakdown for deterministic project health scores. "
-    "4. Task Dependencies: Use get_task_dependencies and get_blockers to analyze blockers and downstream impacts. "
-    "5. Action Recommendations: Use get_action_recommendations to suggest high-leverage next steps. "
-    "6. Calendar is a first-class module: use get_calendar_slots, get_upcoming_meetings, and get_event_details when asked about schedules or meetings. "
-    "7. Human-in-the-Loop (HITL): Every mutation or sensitive action (proposing a meeting, updating/cancelling a meeting, assigning a ticket, escalating an approval, changing project status) MUST use the appropriate propose_* tool. It will trigger a human confirmation card with a 15-minute expiration. "
-    "8. Format your responses with structured markdown, bullet points, and clear actionable takeaways."
-)
+def get_gemini_system_prompt() -> str:
+    now_utc = datetime.now(timezone.utc)
+    return (
+        "You are PM Buddy, an AI Operational Intelligence and Governance partner for engineering teams. "
+        f"CURRENT REAL-TIME CONTEXT: Today is {now_utc.strftime('%A, %B %d, %Y')}, current time is {now_utc.strftime('%H:%M')} UTC. Current year is {now_utc.year}. "
+        "All relative dates such as 'today', 'tomorrow', 'next week', 'this Friday' MUST be calculated based on this current date. "
+        "You assist Project Managers, CTOs, Team Leads, and Engineers with project tracking, incident handling, meeting scheduling, and organizational knowledge retrieval. "
+        "You have access to tools for querying tasks, tickets, risks, governance approvals, calendar availability, task dependencies, operational briefings, project health, and knowledge base documents. "
+        "CRITICAL RULES: "
+        "1. Always use available tools to query factual operational data and knowledge documents. Never make up tasks, tickets, schedules, or architectural facts. "
+        "2. RAG & Citations: When answering questions about architecture decisions, PRDs, runbooks, policies, or postmortems, use search_knowledge. Always ground your answer in retrieved citations (e.g. 'According to: Payment Architecture Decision — v2.1'). If the knowledge base does not contain the answer, explicitly state that evidence is insufficient. "
+        "3. Daily Briefing & Health: Use get_daily_briefing for daily operational summaries and get_project_health_breakdown for deterministic project health scores. "
+        "4. Task Dependencies: Use get_task_dependencies and get_blockers to analyze blockers and downstream impacts. "
+        "5. Action Recommendations: Use get_action_recommendations to suggest high-leverage next steps. "
+        "6. Calendar is a first-class module: use get_calendar_slots, get_upcoming_meetings, and get_event_details when asked about schedules or meetings. "
+        "7. Human-in-the-Loop (HITL): Every mutation or sensitive action (proposing a meeting, updating/cancelling a meeting, assigning a ticket, escalating an approval, changing project status) MUST use the appropriate propose_* tool. It will trigger a human confirmation card with a 15-minute expiration. "
+        "8. Format your responses with structured markdown, bullet points, and clear actionable takeaways."
+    )
+
+PM_BUDDY_SYSTEM_PROMPT = get_gemini_system_prompt()
 
 
 # Python tool definitions with type annotations and docstrings for Gemini
@@ -186,11 +192,23 @@ def get_project_health_breakdown(project_id: str) -> str:
 
 
 def get_action_recommendations(limit: int = 5) -> str:
-    """Provides prioritized, deterministic operational recommendations for high-leverage next actions (e.g. escalating breached tickets, unblocking tasks, approving overdue gates)."""
+    """Provides prioritized, deterministic operational recommendations for high-leverage next actions."""
+    return ""
+
+
+def create_task(title: str, description: str = "", priority: str = "P2", due_date: str = "", project_id: str = "") -> str:
+    """Creates a new to-do task assigned to the user."""
+    return ""
+
+
+def create_ticket(title: str, severity: str = "high", priority: str = "P2", description: str = "", category: str = "Infrastructure", affected_service: str = "") -> str:
+    """Creates a new incident, bug, or support ticket with SLA tracking."""
     return ""
 
 
 ALL_GEMINI_TOOLS = [
+    create_task,
+    create_ticket,
     get_my_work,
     get_tickets,
     get_risks,
@@ -221,42 +239,95 @@ ALL_GEMINI_TOOLS = [
 class GeminiService:
     """
     Direct Google Gemini Integration via the official google-generativeai SDK.
-    Supports tool calling, multi-turn reasoning, RBAC enforcement, and HITL action interception.
+    Supports dynamic multi-key rotation pool with automatic failover upon 429 quota exhaustion,
+    tool calling, multi-turn reasoning, RBAC enforcement, and HITL action interception.
     """
 
-    _model: Optional[genai.GenerativeModel] = None
-    _configured_key: Optional[str] = None
+    _models: dict[str, genai.GenerativeModel] = {}
+    _current_key_index: int = 0
+    _key_cooldowns: dict[str, datetime] = {}
 
     @classmethod
-    def get_api_key(cls) -> str:
-        """Resolves the live Gemini API key from settings, env, or default."""
-        return (
+    def get_api_keys(cls) -> list[str]:
+        """
+        Collects and deduplicates all configured Gemini API keys from settings and env.
+        Supports comma-separated strings (GEMINI_API_KEYS or GEMINI_API_KEY)
+        and numbered keys (GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.).
+        """
+        raw_keys: list[str] = []
+
+        # 1. Multi-key setting: GEMINI_API_KEYS (comma or newline-separated)
+        val_multi = os.environ.get("GEMINI_API_KEYS") or getattr(settings, "GEMINI_API_KEYS", None)
+        if val_multi:
+            raw_keys.extend(val_multi.replace("\n", ",").split(","))
+
+        # 2. Standard GEMINI_API_KEY / gemini_api_key (comma-separated supported)
+        val_single = (
             os.environ.get("GEMINI_API_KEY")
             or getattr(settings, "GEMINI_API_KEY", None)
             or getattr(settings, "gemini_api_key", None)
             or os.environ.get("gemini_api_key")
-            or DEFAULT_GEMINI_KEY
         )
+        if val_single:
+            raw_keys.extend(val_single.replace("\n", ",").split(","))
+
+        # 3. Numbered environment variables (GEMINI_API_KEY_1, GEMINI_API_KEY_2, ...)
+        for i in range(1, 20):
+            k = os.environ.get(f"GEMINI_API_KEY_{i}") or getattr(settings, f"GEMINI_API_KEY_{i}", None)
+            if k:
+                raw_keys.append(k)
+
+        # 4. Check .env and ../.env files on disk
+        try:
+            from dotenv import dotenv_values
+            for env_path in [".env", "../.env", "backend/.env"]:
+                if os.path.exists(env_path):
+                    vals = dotenv_values(env_path)
+                    for k in ["GEMINI_API_KEYS", "GEMINI_API_KEY", "gemini_api_key"]:
+                        if vals.get(k):
+                            raw_keys.extend(vals[k].replace("\n", ",").split(","))
+        except Exception:
+            pass
+
+        unique_keys: list[str] = []
+        for k in raw_keys:
+            cleaned = k.strip().strip("\"'")
+            if cleaned and cleaned not in unique_keys and cleaned != "mock-key":
+                unique_keys.append(cleaned)
+
+        if not unique_keys and DEFAULT_GEMINI_KEY:
+            unique_keys.append(DEFAULT_GEMINI_KEY)
+
+        return unique_keys
 
     @classmethod
-    def get_model(cls) -> genai.GenerativeModel:
-        """Lazy-initializes the Gemini GenerativeModel with tools."""
-        api_key = cls.get_api_key()
-        if cls._model is None or cls._configured_key != api_key:
-            genai.configure(api_key=api_key)
-            cls._configured_key = api_key
-            model_name = getattr(settings, "LLM_MODEL", "gemini-3.6-flash")
-            if not model_name or "gemini" not in model_name:
+    def get_api_key(cls) -> str:
+        """Returns the currently active Gemini API key from the rotation pool."""
+        keys = cls.get_api_keys()
+        if not keys:
+            return DEFAULT_GEMINI_KEY
+        idx = cls._current_key_index % len(keys)
+        return keys[idx]
+
+    @classmethod
+    def get_model(cls, api_key: Optional[str] = None) -> genai.GenerativeModel:
+        """Lazy-initializes or retrieves the cached Gemini GenerativeModel for a specific API key."""
+        target_key = api_key or cls.get_api_key()
+        if target_key not in cls._models:
+            genai.configure(api_key=target_key)
+            model_name = getattr(settings, "LLM_MODEL", "gemini-3.6-flash") or "gemini-3.6-flash"
+            if "gemini" not in model_name:
                 model_name = "gemini-3.6-flash"
 
-            cls._model = genai.GenerativeModel(
+            cls._models[target_key] = genai.GenerativeModel(
                 model_name=model_name,
                 tools=ALL_GEMINI_TOOLS,
-                system_instruction=PM_BUDDY_SYSTEM_PROMPT,
+                system_instruction=get_gemini_system_prompt(),
             )
-            logger.info("Initialized direct Gemini GenerativeModel: %s", model_name)
+            masked = f"...{target_key[-6:]}" if len(target_key) > 6 else "key"
+            logger.info("Initialized direct Gemini GenerativeModel for key %s: %s", masked, model_name)
 
-        return cls._model
+        return cls._models[target_key]
 
     @classmethod
     async def generate_response(
@@ -269,94 +340,169 @@ class GeminiService:
         user_permissions: list[str],
     ) -> dict[str, Any]:
         """
-        Executes a prompt against Gemini with dynamic tool calling and HITL interception.
+        Executes a prompt against Gemini with dynamic tool calling, HITL interception,
+        and automatic multi-key failover rotation when 429 quota exhaustion is detected.
         """
-        model = cls.get_model()
-        chat = model.start_chat(enable_automatic_function_calling=False)
+        keys = cls.get_api_keys()
+        if not keys:
+            raise RuntimeError("No Gemini API keys configured.")
 
-        accumulated_blocks: list[dict[str, Any]] = []
-        action_proposed = False
+        total_keys = len(keys)
+        attempts = 0
+        last_exception = None
 
-        # First turn: Send user prompt
-        response = chat.send_message(prompt)
-
-        # Loop up to 3 turns if tool calls are requested
-        max_turns = 3
-        current_turn = 0
-
-        while current_turn < max_turns:
-            current_turn += 1
-            has_tool_call = False
-
-            for part in response.parts:
-                if fn_call := getattr(part, "function_call", None):
-                    has_tool_call = True
-                    tool_name = fn_call.name
-                    # Convert protobuf MapComposite / RepeatedComposite to python dict
-                    tool_args = {}
-                    for k, v in fn_call.args.items():
-                        if hasattr(v, "values"):  # list
-                            tool_args[k] = list(v)
-                        else:
-                            tool_args[k] = v
-
-                    logger.info("Gemini invoked tool '%s' with args %s", tool_name, tool_args)
-
-                    # Execute tool via strict RBAC & HITL validation
-                    tool_result = await execute_tool(
-                        session=session,
-                        organization_id=organization_id,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        tool_name=tool_name,
-                        arguments=tool_args,
-                        user_permissions=user_permissions,
-                    )
-
-                    if tool_result.get("blocks"):
-                        accumulated_blocks.extend(tool_result["blocks"])
-
-                    # If sensitive HITL action was proposed, STOP turn and return proposal
-                    if tool_result.get("is_sensitive"):
-                        action_proposed = True
-                        return {
-                            "text": tool_result.get("text", "I have prepared the action proposal. Please review and confirm below."),
-                            "blocks": accumulated_blocks,
-                            "actions": [tool_result.get("data", {})],
-                            "model": "gemini-3.6-flash",
-                        }
-
-                    # Feed tool execution result back to Gemini
-                    result_summary = tool_result.get("text") or json.dumps(tool_result.get("data", {}))
-                    response = chat.send_message(
-                        genai.protos.Content(
-                            parts=[
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=tool_name,
-                                        response={"result": result_summary},
-                                    )
-                                )
-                            ]
-                        )
-                    )
-                    break
-
-            if not has_tool_call:
+        # Advance current_key_index to first non-cooldown key if current is in cooldown
+        now = datetime.now(timezone.utc)
+        for offset in range(total_keys):
+            test_idx = (cls._current_key_index + offset) % total_keys
+            test_key = keys[test_idx]
+            cd = cls._key_cooldowns.get(test_key)
+            if not cd or now >= cd:
+                cls._current_key_index = test_idx
                 break
 
-        # Final text from model
-        final_text = ""
-        try:
-            final_text = response.text
-        except Exception:
-            for part in response.parts:
-                if hasattr(part, "text") and part.text:
-                    final_text += part.text
+        while attempts < total_keys:
+            current_idx = cls._current_key_index % total_keys
+            api_key = keys[current_idx]
+            masked_key = f"...{api_key[-6:]}" if len(api_key) > 6 else "key"
 
-        return {
-            "text": final_text,
-            "blocks": accumulated_blocks,
-            "actions": [],
-            "model": "gemini-3.6-flash",
-        }
+            # Check if key is currently in cooldown
+            now = datetime.now(timezone.utc)
+            cooldown_until = cls._key_cooldowns.get(api_key)
+            if cooldown_until and now < cooldown_until:
+                logger.info(
+                    "Key %s in cooldown until %s. Rotating to next key (%d/%d)...",
+                    masked_key,
+                    cooldown_until.strftime("%H:%M:%S"),
+                    attempts + 1,
+                    total_keys,
+                )
+                cls._current_key_index = (cls._current_key_index + 1) % total_keys
+                attempts += 1
+                continue
+
+            try:
+                genai.configure(api_key=api_key)
+                os.environ["GEMINI_API_KEY"] = api_key
+                model = cls.get_model(api_key)
+                chat = model.start_chat(enable_automatic_function_calling=False)
+
+                accumulated_blocks: list[dict[str, Any]] = []
+                action_proposed = False
+                final_text = ""
+
+                # First turn: Send user prompt
+                response = chat.send_message(prompt)
+
+                # Loop up to 3 turns if tool calls are requested
+                max_turns = 3
+                current_turn = 0
+
+                while current_turn < max_turns:
+                    current_turn += 1
+                    has_tool_call = False
+
+                    for part in response.parts:
+                        if fn_call := getattr(part, "function_call", None):
+                            has_tool_call = True
+                            tool_name = fn_call.name
+                            tool_args = {}
+                            for k, v in fn_call.args.items():
+                                if hasattr(v, "values"):
+                                    tool_args[k] = list(v)
+                                else:
+                                    tool_args[k] = v
+
+                            logger.info("Gemini (%s) invoked tool '%s' with args %s", masked_key, tool_name, tool_args)
+
+                            tool_result = await execute_tool(
+                                session=session,
+                                organization_id=organization_id,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                tool_name=tool_name,
+                                arguments=tool_args,
+                                user_permissions=user_permissions,
+                            )
+
+                            if tool_result.get("blocks"):
+                                accumulated_blocks.extend(tool_result["blocks"])
+
+                            if tool_result.get("is_sensitive"):
+                                action_proposed = True
+                                return {
+                                    "text": tool_result.get("text", "I have prepared the action proposal. Please review and confirm below."),
+                                    "blocks": accumulated_blocks,
+                                    "actions": [tool_result.get("data", {})],
+                                    "model": "gemini-3.6-flash",
+                                }
+
+                            result_summary = tool_result.get("text") or json.dumps(tool_result.get("data", {}))
+                            try:
+                                response = chat.send_message(
+                                    genai.protos.Content(
+                                        parts=[
+                                            genai.protos.Part(
+                                                function_response=genai.protos.FunctionResponse(
+                                                    name=tool_name,
+                                                    response={"result": result_summary},
+                                                )
+                                            )
+                                        ]
+                                    )
+                                )
+                            except Exception as tool_feed_err:
+                                logger.warning("Could not feed function response back to Gemini (%s); using tool text output directly.", tool_feed_err)
+                                final_text = tool_result.get("text", "")
+                                break
+                            break
+
+                    if not has_tool_call:
+                        break
+
+                if not final_text:
+                    try:
+                        final_text = response.text
+                    except Exception:
+                        for part in response.parts:
+                            if hasattr(part, "text") and part.text:
+                                final_text += part.text
+
+                if not final_text and accumulated_blocks:
+                    final_text = "Here is the operational information you requested:"
+
+                return {
+                    "text": final_text,
+                    "blocks": accumulated_blocks,
+                    "actions": [],
+                    "model": "gemini-3.6-flash",
+                }
+
+            except Exception as e:
+                err_str = str(e)
+                is_quota_error = (
+                    "429" in err_str
+                    or "ResourceExhausted" in type(e).__name__
+                    or "ResourceExhausted" in err_str
+                    or "quota" in err_str.lower()
+                    or "rate limit" in err_str.lower()
+                )
+
+                if is_quota_error:
+                    from datetime import timedelta
+                    cls._key_cooldowns[api_key] = datetime.now(timezone.utc) + timedelta(hours=1)
+                    logger.warning(
+                        "Gemini API key %s exhausted (429/quota). Rotating to next key (pool size: %d).",
+                        masked_key,
+                        total_keys,
+                    )
+                    cls._current_key_index = (cls._current_key_index + 1) % total_keys
+                    attempts += 1
+                    last_exception = e
+                    continue
+                else:
+                    raise e
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("All Gemini API keys in the pool are currently rate-limited.")

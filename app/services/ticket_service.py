@@ -144,3 +144,100 @@ class TicketService:
             "notes": notes,
         }
 
+    @staticmethod
+    async def create_ticket(
+        session: AsyncSession,
+        organization_id: UUID,
+        title: str,
+        description: str = "",
+        severity: str = "high",
+        priority: str = "P2",
+        category: str = "Infrastructure",
+        affected_service: str | None = None,
+        assignee_id: UUID | None = None,
+        project_id: UUID | None = None,
+        sla_hours: int | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new incident/support ticket with SLA tracking."""
+        from datetime import timedelta
+
+        # Normalize severity and priority
+        sev_clean = severity.lower() if severity in ["critical", "high", "medium", "low"] else "high"
+        prio_clean = priority.upper() if priority and priority.upper() in ["P0", "P1", "P2", "P3"] else "P2"
+
+        if "p0" in severity.lower() or prio_clean == "P0":
+            sev_clean = "critical"
+            prio_clean = "P0"
+            default_sla = 4
+        elif "p1" in severity.lower() or prio_clean == "P1":
+            sev_clean = "critical"
+            prio_clean = "P1"
+            default_sla = 8
+        elif "p3" in severity.lower() or prio_clean == "P3":
+            sev_clean = "medium"
+            prio_clean = "P3"
+            default_sla = 48
+        else:
+            sev_clean = "high" if prio_clean == "P2" else sev_clean
+            default_sla = 24
+
+        hours = sla_hours or default_sla
+        now = datetime.now(timezone.utc)
+        sla_due_at = now + timedelta(hours=hours)
+
+        # Generate ticket number
+        count_stmt = select(Ticket).where(Ticket.organization_id == organization_id)
+        count = len((await session.execute(count_stmt)).scalars().all())
+        ticket_number = f"INC-{count + 101}"
+
+        # If project_id not provided, pick first project
+        if not project_id:
+            from app.models.entities import Project
+            proj_stmt = (
+                select(Project.id)
+                .where(
+                    Project.organization_id == organization_id,
+                    Project.deleted_at.is_(None)
+                )
+                .limit(1)
+            )
+            project_id = (await session.execute(proj_stmt)).scalar_one_or_none()
+
+        ticket = Ticket(
+            organization_id=organization_id,
+            project_id=project_id,
+            ticket_number=ticket_number,
+            title=title.strip(),
+            description=description or f"Incident reported: {title.strip()}",
+            category=category,
+            severity=sev_clean,
+            priority=prio_clean,
+            status="open",
+            affected_service=affected_service,
+            assignee_id=assignee_id,
+            sla_due_at=sla_due_at,
+        )
+        session.add(ticket)
+        await session.flush()
+        await session.commit()
+
+        sla_info = SLAEngine.evaluate_status(ticket.created_at, ticket.sla_due_at, now=now)
+        return {
+            "id": str(ticket.id),
+            "ticket_number": ticket.ticket_number,
+            "title": ticket.title,
+            "description": ticket.description,
+            "category": ticket.category,
+            "severity": ticket.severity,
+            "priority": ticket.priority,
+            "status": ticket.status,
+            "affected_service": ticket.affected_service,
+            "assignee_id": str(ticket.assignee_id) if ticket.assignee_id else None,
+            "sla_status": sla_info["status"].value,
+            "is_breached": sla_info["is_breached"],
+            "sla_due_at": ticket.sla_due_at.isoformat(),
+            "breach_risk_score": ticket.breach_risk_score,
+            "probable_cause": ticket.probable_cause,
+            "suggested_resolution": ticket.suggested_resolution,
+        }
+

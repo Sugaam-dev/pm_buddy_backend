@@ -153,6 +153,23 @@ class ActionRecommendationsInput(BaseModel):
     limit: int = Field(5, description="Maximum number of recommendations to return")
 
 
+class CreateTaskInput(BaseModel):
+    title: str = Field(..., description="Title or summary of the task or to-do")
+    description: Optional[str] = Field("", description="Optional details or context for the task")
+    priority: Optional[str] = Field("P2", description="Priority tier: P0, P1, P2, P3")
+    due_date: Optional[str] = Field(None, description="Optional ISO 8601 due date")
+    project_id: Optional[str] = Field(None, description="Optional associated project UUID")
+
+
+class CreateTicketInput(BaseModel):
+    title: str = Field(..., description="Title or summary of the incident/ticket")
+    severity: Optional[str] = Field("high", description="Severity level: critical, high, medium, low")
+    priority: Optional[str] = Field("P2", description="Priority tier: P0, P1, P2, P3")
+    description: Optional[str] = Field("", description="Detailed incident description")
+    category: Optional[str] = Field("Infrastructure", description="Ticket category")
+    affected_service: Optional[str] = Field(None, description="Affected service name")
+
+
 # ---------------------------------------------------------------------------
 # Tool Definition & Registry
 # ---------------------------------------------------------------------------
@@ -180,6 +197,10 @@ async def _exec_get_my_work(
     args: MyWorkInput,
 ) -> dict[str, Any]:
     tasks = await TaskService.list_tasks(session, organization_id, assignee_id=user_id)
+    is_personal = bool(tasks)
+    if not tasks:
+        tasks = await TaskService.list_tasks(session, organization_id)
+
     approvals = await ApprovalService.list_approvals(session, organization_id)
     tickets = await TicketService.list_tickets(session, organization_id, assignee_id=user_id)
 
@@ -190,7 +211,7 @@ async def _exec_get_my_work(
     if tasks:
         blocks.append({
             "type": "task_list",
-            "title": "Your Priority Tasks",
+            "title": "Your Priority Tasks" if is_personal else "Organizational Priority Tasks",
             "data": tasks[:args.limit],
         })
     if approvals:
@@ -210,8 +231,18 @@ async def _exec_get_my_work(
         ],
     })
 
+    task_lines = []
+    for t in tasks[:args.limit]:
+        status_label = t.get("status", "todo").replace("_", " ").upper()
+        p_label = t.get("priority", "P2")
+        task_lines.append(f"- **[{p_label}] {t.get('title')}** — Status: `{status_label}`")
+
+    section_header = "### 📋 Your To-Dos & Tasks:\n" if is_personal else "### 📋 Priority To-Dos:\n"
+    items_list = "\n".join(task_lines)
+
     text = (
-        f"You have **{len(tasks)} tasks**, **{len(approvals)} pending approvals**, and **{len(tickets)} tickets** assigned.\n\n"
+        f"{section_header}{items_list}\n\n"
+        f"You have **{len(tasks)} task(s)**, **{len(approvals)} pending approval(s)**, and **{len(tickets)} ticket(s)** tracked.\n\n"
         f"**Immediate Priority**: Address the {len(p0_tasks)} P0 task(s) and {len(overdue_approvals)} breached approval(s)."
     )
 
@@ -406,7 +437,7 @@ async def _exec_get_upcoming_meetings(
         text = f"Found **{len(events)} upcoming meeting(s)** over the next {args.days_ahead} day(s):\n"
         for evt in events[:5]:
             start_dt = datetime.fromisoformat(evt["start_time"])
-            fmt_time = start_dt.strftime("%b %d, %Y %I:%M %p")
+            fmt_time = start_dt.strftime("%b %d, %Y %I:%M %p UTC")
             text += f"- **{evt['title']}**: {fmt_time} ({len(evt.get('attendees', []))} attendees)\n"
 
     blocks = [{"type": "calendar_events", "title": "Upcoming Calendar Meetings", "data": events}]
@@ -762,11 +793,114 @@ async def _exec_get_action_recommendations(
     return {"text": text, "blocks": blocks, "data": {"recommendations": recs}}
 
 
+async def _exec_create_task(
+    session: AsyncSession,
+    organization_id: UUID,
+    user_id: UUID,
+    conversation_id: UUID,
+    args: CreateTaskInput,
+) -> dict[str, Any]:
+    due_dt = None
+    if args.due_date:
+        try:
+            from app.services.action_service import _parse_iso_datetime
+            due_dt = _parse_iso_datetime(args.due_date)
+        except Exception:
+            pass
+
+    proj_uuid = None
+    if args.project_id:
+        try:
+            proj_uuid = UUID(args.project_id)
+        except ValueError:
+            pass
+
+    created = await TaskService.create_task(
+        session=session,
+        organization_id=organization_id,
+        title=args.title,
+        description=args.description,
+        priority=args.priority or "P2",
+        assignee_id=user_id,
+        project_id=proj_uuid,
+        due_date=due_dt,
+    )
+
+    text = (
+        f"✓ Successfully added to your To-Do list:\n\n"
+        f"- **[{created['priority']}] {created['title']}**\n"
+        f"  - **Status**: `{created['status'].upper()}`\n"
+        f"  - **Assigned To**: You\n"
+    )
+    if created.get("due_date"):
+        text += f"  - **Due Date**: {created['due_date']}\n"
+
+    blocks = [{
+        "type": "tasks_list",
+        "title": "Task Created",
+        "data": [created]
+    }]
+
+    return {"text": text, "blocks": blocks, "data": {"task": created}}
+
+
+async def _exec_create_ticket(
+    session: AsyncSession,
+    organization_id: UUID,
+    user_id: UUID,
+    conversation_id: UUID,
+    args: CreateTicketInput,
+) -> dict[str, Any]:
+    created = await TicketService.create_ticket(
+        session=session,
+        organization_id=organization_id,
+        title=args.title,
+        description=args.description or f"Incident: {args.title}",
+        severity=args.severity or "high",
+        priority=args.priority or "P2",
+        category=args.category or "Infrastructure",
+        affected_service=args.affected_service,
+        assignee_id=user_id,
+    )
+
+    text = (
+        f"✓ **Ticket Created**: `{created['ticket_number']}` — **{created['title']}**\n\n"
+        f"- **Severity**: `{created['severity'].upper()}` (Priority: `{created['priority']}`)\n"
+        f"- **Category**: {created['category']}\n"
+        f"- **Status**: `{created['status'].upper()}`\n"
+        f"- **SLA Target Due**: {created['sla_due_at']}\n"
+    )
+
+    blocks = [{
+        "type": "table",
+        "title": f"Incident Ticket {created['ticket_number']}",
+        "data": [created]
+    }]
+
+    return {"text": text, "blocks": blocks, "data": {"ticket": created}}
+
+
 # ---------------------------------------------------------------------------
 # Global Tool Metadata Catalog
 # ---------------------------------------------------------------------------
 
 TOOL_METADATA: dict[str, ToolDefinition] = {
+    "create_task": ToolDefinition(
+        name="create_task",
+        description="Creates a new task or to-do item assigned to the user.",
+        schema_class=CreateTaskInput,
+        is_sensitive=False,
+        required_permission="task.write",
+        executor=_exec_create_task,
+    ),
+    "create_ticket": ToolDefinition(
+        name="create_ticket",
+        description="Creates a new incident, bug, or support ticket with SLA tracking.",
+        schema_class=CreateTicketInput,
+        is_sensitive=False,
+        required_permission="ticket.write",
+        executor=_exec_create_ticket,
+    ),
     "get_my_work": ToolDefinition(
         name="get_my_work",
         description="Aggregates pending tasks, assigned tickets, and pending governance approvals for the current user.",
@@ -1064,9 +1198,16 @@ async def execute_tool(
             m_end = payload.get("end_time", "")
             m_attendees = ", ".join(payload.get("attendee_emails", []))
             m_proj = payload.get("project_id") or "General"
+            try:
+                dt_start = datetime.fromisoformat(m_start)
+                dt_end = datetime.fromisoformat(m_end)
+                time_range = f"{dt_start.strftime('%b %d, %Y %I:%M %p')} – {dt_end.strftime('%I:%M %p')} UTC"
+            except Exception:
+                time_range = f"{m_start} – {m_end}"
+
             confirmation_text = (
                 f"### 📅 Proposed Meeting: **{m_title}**\n\n"
-                f"- **Time**: {m_start} – {m_end}\n"
+                f"- **Time**: {time_range}\n"
                 f"- **Participants**: {m_attendees}\n"
                 f"- **Project**: {m_proj}\n"
                 f"- **Status**: ✓ No initial conflicts detected\n\n"

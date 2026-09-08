@@ -12,10 +12,61 @@ class LoginRequest(BaseModel):
     password: str = "demo123"
 
 
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict[str, Any]
+
+
+@router.post("/signup", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
+async def signup(req: SignupRequest):
+    from uuid import uuid4, UUID
+    email = req.email.lower().strip()
+
+    if email in DEMO_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email address already exists. Please sign in.",
+        )
+
+    # Security rule: Public signup assigns only the default non-privileged role (VIEWER)
+    new_user_id = uuid4()
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
+    DEMO_USERS[email] = {
+        "user_id": new_user_id,
+        "email": email,
+        "name": req.name.strip(),
+        "organization_id": org_id,
+        "role_name": "VIEWER",
+        "permissions": [
+            "project.read",
+            "task.read",
+            "ticket.read",
+            "calendar.read",
+            "risk.read",
+        ],
+    }
+
+    token = create_demo_token(email)
+    user_info = DEMO_USERS[email]
+
+    return LoginResponse(
+        access_token=token,
+        user={
+            "user_id": str(user_info["user_id"]),
+            "email": user_info["email"],
+            "name": user_info["name"],
+            "organization_id": str(user_info["organization_id"]),
+            "role": user_info["role_name"],
+            "permissions": user_info["permissions"],
+        },
+    )
 
 
 @router.post("/login", response_model=LoginResponse)

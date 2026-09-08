@@ -9,6 +9,27 @@ from app.models.entities import AIAction, AIConversation, AuditLog, OutboxEvent
 from app.services.calendar_service import LocalCalendarProvider
 
 
+def _parse_iso_datetime(val: Any) -> datetime:
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    s = str(val).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                base = s.split("+")[0].split(".")[0]
+                dt = datetime.strptime(base, fmt)
+                return dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid date/time format: '{val}'. Expected ISO 8601 format."
+        )
+
+
 class ActionService:
     @staticmethod
     async def propose_action(
@@ -94,12 +115,14 @@ class ActionService:
             if not has_perm:
                 if action.action_type in ("create_calendar_meeting", "update_calendar_meeting", "cancel_calendar_meeting"):
                     has_perm = "calendar.write" in user_permissions
-                elif action.action_type == "assign_ticket":
+                elif action.action_type in ("assign_ticket", "create_ticket"):
                     has_perm = "ticket.write" in user_permissions or "ticket.assign" in user_permissions
                 elif action.action_type in ("send_escalation", "approve_gate"):
                     has_perm = "approval.write" in user_permissions or "approval.approve" in user_permissions
                 elif action.action_type == "change_project_status":
                     has_perm = "project.write" in user_permissions
+                elif action.action_type in ("create_task", "update_task"):
+                    has_perm = "task.write" in user_permissions
 
             if not has_perm:
                 raise HTTPException(
@@ -148,8 +171,8 @@ class ActionService:
                 from app.services.calendar_service import CalendarService
                 start_raw = p["start_time"]
                 end_raw = p["end_time"]
-                start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")) if isinstance(start_raw, str) else start_raw
-                end = datetime.fromisoformat(end_raw.replace("Z", "+00:00")) if isinstance(end_raw, str) else end_raw
+                start = _parse_iso_datetime(start_raw)
+                end = _parse_iso_datetime(end_raw)
                 attendees = p.get("attendee_emails") or p.get("attendees", [])
                 project_id = UUID(str(p["project_id"])) if p.get("project_id") else None
 
@@ -192,8 +215,8 @@ class ActionService:
                     existing_evt = await CalendarService.get_event_by_id(session, organization_id, event_id)
                     s_raw = p.get("start_time", existing_evt["start_time"])
                     e_raw = p.get("end_time", existing_evt["end_time"])
-                    start = datetime.fromisoformat(s_raw.replace("Z", "+00:00")) if isinstance(s_raw, str) else s_raw
-                    end = datetime.fromisoformat(e_raw.replace("Z", "+00:00")) if isinstance(e_raw, str) else e_raw
+                    start = _parse_iso_datetime(s_raw)
+                    end = _parse_iso_datetime(e_raw)
                     attendees = p.get("attendees") or existing_evt.get("attendees", [])
 
                     conflicts = await CalendarService.get_conflicts(
@@ -293,6 +316,43 @@ class ActionService:
                     status=p.get("status"),
                     health=p.get("health"),
                     reason=p.get("reason"),
+                )
+
+            # 6. Task Creation
+            elif action.action_type == "create_task":
+                from app.services.task_service import TaskService
+                due_raw = p.get("due_date")
+                due_dt = _parse_iso_datetime(due_raw) if due_raw else None
+                proj_id = UUID(str(p["project_id"])) if p.get("project_id") else None
+                assignee_uuid = UUID(str(p["assignee_id"])) if p.get("assignee_id") else user_id
+                result_payload = await TaskService.create_task(
+                    session=session,
+                    organization_id=organization_id,
+                    title=p.get("title", "New Task"),
+                    description=p.get("description"),
+                    priority=p.get("priority", "P2"),
+                    status=p.get("status", "todo"),
+                    assignee_id=assignee_uuid,
+                    project_id=proj_id,
+                    due_date=due_dt,
+                )
+
+            # 7. Ticket Creation
+            elif action.action_type == "create_ticket":
+                from app.services.ticket_service import TicketService
+                proj_id = UUID(str(p["project_id"])) if p.get("project_id") else None
+                assignee_uuid = UUID(str(p["assignee_id"])) if p.get("assignee_id") else None
+                result_payload = await TicketService.create_ticket(
+                    session=session,
+                    organization_id=organization_id,
+                    title=p.get("title", "Incident"),
+                    description=p.get("description", ""),
+                    severity=p.get("severity", "high"),
+                    priority=p.get("priority", "P2"),
+                    category=p.get("category", "Infrastructure"),
+                    affected_service=p.get("affected_service"),
+                    assignee_id=assignee_uuid,
+                    project_id=proj_id,
                 )
 
             else:

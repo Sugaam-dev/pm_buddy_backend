@@ -118,6 +118,63 @@ DEMO_USERS: dict[str, dict[str, Any]] = {
             "risk.read", "calendar.read"
         ],
     },
+    # Aliases matching seed data / calendar connections
+    "alice.pm@acme.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000001"),
+        "email": "alice.pm@acme.com",
+        "name": "Alice PM",
+        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
+        "role_name": "PM",
+        "permissions": [
+            "project.read", "project.write", "task.read", "task.write",
+            "ticket.read", "ticket.write", "ticket.assign", "approval.read",
+            "approval.approve", "risk.read", "risk.write", "calendar.read", "calendar.write",
+            "ai.chat", "action.execute"
+        ],
+    },
+    "rahul.arch@acme.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000005"),
+        "email": "rahul.arch@acme.com",
+        "name": "Rahul Eng",
+        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
+        "role_name": "ENGINEER",
+        "permissions": [
+            "project.read", "task.read", "task.write", "ticket.read",
+            "ticket.write", "calendar.read", "calendar.write", "ai.chat"
+        ],
+    },
+    "bob.lead@acme.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000002"),
+        "email": "bob.lead@acme.com",
+        "name": "Bob Lead",
+        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
+        "role_name": "TEAM_LEAD",
+        "permissions": [
+            "project.read", "task.read", "task.write", "ticket.read",
+            "ticket.write", "ticket.assign", "approval.read", "risk.read",
+            "calendar.read", "calendar.write", "ai.chat", "action.execute"
+        ],
+    },
+    "charlie.cto@acme.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000003"),
+        "email": "charlie.cto@acme.com",
+        "name": "Charlie CTO",
+        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
+        "role_name": "CTO",
+        "permissions": [
+            "project.read", "project.write", "task.read", "ticket.read",
+            "approval.read", "approval.approve", "risk.read", "risk.write",
+            "calendar.read", "calendar.write", "ai.chat", "action.execute"
+        ],
+    },
+    "sarah.admin@acme.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000004"),
+        "email": "sarah.admin@acme.com",
+        "name": "Sarah Admin",
+        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
+        "role_name": "admin",
+        "permissions": ["*"],
+    },
     "bob@globex.com": {
         "user_id": UUID("20000000-0000-0000-0000-000000000001"),
         "email": "bob@globex.com",

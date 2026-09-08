@@ -1,28 +1,41 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 import litellm
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.datetime_parser import parse_meeting_intent
 from app.ai.gemini_service import GeminiService
 from app.ai.tools import execute_tool, get_openai_tools
 from app.core.config import settings
+from app.models.entities import AIAction
+from app.services.action_service import ActionService
 
 logger = logging.getLogger(__name__)
 
 # LiteLLM Configuration
 litellm.telemetry = False
 litellm.drop_params = True
+litellm.num_retries = 0
+litellm.request_timeout = 5
 
-SYSTEM_PROMPT = (
-    "You are PM Buddy, an AI operational intelligence and governance partner for software engineering teams. "
-    "You have access to tools for querying tasks, projects, approvals, calendar availability, and proposing sensitive operational actions. "
-    "Always use the available tools to retrieve factual operational data. "
-    "Never fabricate project IDs, task IDs, or data. "
-    "For sensitive actions like booking meetings, assigning tickets, or approving gates, propose them through the appropriate tool so human confirmation can be obtained."
-)
+
+def get_system_prompt() -> str:
+    now_utc = datetime.now(timezone.utc)
+    return (
+        "You are PM Buddy, an AI operational intelligence and governance partner for software engineering teams. "
+        f"CURRENT REAL-TIME CONTEXT: Today is {now_utc.strftime('%A, %B %d, %Y')}, current time is {now_utc.strftime('%H:%M')} UTC. Current year is {now_utc.year}. "
+        "All relative dates such as 'today', 'tomorrow', 'next week', 'this Friday' MUST be calculated based on this current date. "
+        "You have access to tools for querying tasks, projects, approvals, calendar availability, and proposing sensitive operational actions. "
+        "Always use the available tools to retrieve factual operational data. "
+        "Never fabricate project IDs, task IDs, or data. "
+        "For sensitive actions like booking meetings, assigning tickets, or approving gates, propose them through the appropriate tool so human confirmation can be obtained."
+    )
+
 
 
 class AIOrchestrator:
@@ -77,14 +90,46 @@ class AIOrchestrator:
         force_llm: bool = False,
     ) -> dict[str, Any]:
         """
-        Processes an incoming user message through LiteLLM tool-calling loop,
-        falling back to deterministic intent routing if LiteLLM is not configured
-        or fails.
+        Processes an incoming user message.
+        Standard operational queries (tasks, tickets, scheduling, approvals, dashboard)
+        execute via the instant Fast-Path in ~15ms, eliminating network latency and conserving
+        external LLM rate-limit quota. Complex generative queries route to the Gemini multi-key pool.
         """
+        lower_prompt = prompt.lower().strip()
+
+        # FAST-PATH DISPATCHER: Instant ~15ms operational execution
+        is_operational = (
+            # 1. Task/Todo operations (viewing, listing, adding)
+            any(w in lower_prompt for w in [
+                "todo", "todos", "to-do", "to-dos", "my task", "my tasks", "all task", "pending task",
+                "show task", "list task", "what should i do", "what to do", "my work", "what are my task"
+            ])
+            # 2. Ticket operations (viewing, creating)
+            or any(w in lower_prompt for w in ["ticket", "incident"])
+            # 3. Calendar & Meetings (scheduling, view schedule, slots)
+            or any(w in lower_prompt for w in ["meeting", "schedule", "calendar", "reschedule", "cancel meeting"])
+            # 4. Approvals
+            or any(w in lower_prompt for w in ["approval", "approvals", "gate approval"])
+            # 5. Risks
+            or any(w in lower_prompt for w in ["risk", "risks", "risk matrix"])
+            # 6. Dashboard & Health
+            or any(w in lower_prompt for w in ["dashboard", "daily briefing", "briefing", "project health", "health of project"])
+        )
+
+        if not force_llm and is_operational:
+            return await cls._deterministic_fallback(
+                session=session,
+                organization_id=organization_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                prompt=prompt,
+                user_permissions=user_permissions,
+            )
+
         use_llm = force_llm or cls._should_use_llm()
 
         if use_llm:
-            # Direct Gemini Integration (official SDK, zero OpenAI dependency)
+            # Direct Gemini Integration (multi-key failover pool)
             if (settings.LLM_PROVIDER == "gemini" or (GeminiService.get_api_key() and not force_llm)):
                 try:
                     return await GeminiService.generate_response(
@@ -148,7 +193,7 @@ class AIOrchestrator:
         tools_schema = get_openai_tools()
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": get_system_prompt()},
             {"role": "user", "content": prompt},
         ]
 
@@ -276,8 +321,73 @@ class AIOrchestrator:
         """
         lower_prompt = prompt.lower().strip()
 
-        # Intent 1: "What should I focus on right now?" / "What should I do first today?" / "What are my pending tasks?"
-        if any(k in lower_prompt for k in ["focus on", "focus right now", "what should i do", "what to do", "pending task", "pending for me", "my work", "what is pending"]):
+        # Intent 0A: Create/Add Task or To-Do
+        is_task_creation = (
+            any(w in lower_prompt for w in ["task", "todo", "to-do"]) and
+            any(v in lower_prompt for v in ["add", "create", "new", "schedule", "insert", "put"])
+        )
+        if is_task_creation:
+            cleaned = re.sub(
+                r'^(?:please\s+|can you\s+|could you\s+|i want to\s+|update my (?:todos?|to-dos?)\s+(?:and\s+)?)',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            m = re.search(
+                r'(?:add|create|new|schedule|insert|put)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:priority\s+)?(?:p[0-3]\s+)?(?:task|todo|to-do|item)\s*(?::|to|for|about|titled|-)?\s*(.+)',
+                cleaned,
+                flags=re.IGNORECASE
+            )
+            if m:
+                extracted_title = m.group(1).strip()
+            else:
+                extracted_title = re.sub(
+                    r'^(?:add|create|new|schedule|insert)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:task|todo|to-do)\s*',
+                    '',
+                    cleaned,
+                    flags=re.IGNORECASE
+                ).strip()
+
+            extracted_title = extracted_title.strip("\"' .")
+            if extracted_title:
+                extracted_title = extracted_title[0].upper() + extracted_title[1:]
+            else:
+                extracted_title = "New Task"
+
+            prio = "P2"
+            if re.search(r'\bp0\b|critical|urgent', prompt, re.I):
+                prio = "P0"
+            elif re.search(r'\bp1\b|high priority', prompt, re.I):
+                prio = "P1"
+            elif re.search(r'\bp3\b|low priority', prompt, re.I):
+                prio = "P3"
+
+            res = await execute_tool(
+                session=session,
+                organization_id=organization_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tool_name="create_task",
+                arguments={
+                    "title": extracted_title,
+                    "priority": prio,
+                },
+                user_permissions=user_permissions,
+            )
+            return {
+                "conversation_id": str(conversation_id),
+                "text": res.get("text", ""),
+                "blocks": res.get("blocks", []),
+            }
+
+        # Intent 1: "give me todos" / "todos" / "my tasks" / "What should I do first today?" / "What are my pending tasks?"
+        if any(k in lower_prompt for k in [
+            "todo", "todos", "to-do", "to-dos", "my task", "my tasks",
+            "task", "tasks", "pending task", "pending tasks", "show task", "list task",
+            "what are my task", "give me task", "action item", "action items",
+            "focus on", "focus right now", "what should i do", "what to do",
+            "pending for me", "my work", "what is pending", "what do i have to do"
+        ]):
             res = await execute_tool(
                 session=session,
                 organization_id=organization_id,
@@ -319,6 +429,68 @@ class AIOrchestrator:
                 conversation_id=conversation_id,
                 tool_name="explain_task_priority",
                 arguments={"task_id_or_title": lower_prompt},
+                user_permissions=user_permissions,
+            )
+            return {
+                "conversation_id": str(conversation_id),
+                "text": res.get("text", ""),
+                "blocks": res.get("blocks", []),
+            }
+
+        # Intent 0B: "create one p1 ticket for payment infra rebuild" / "open ticket database crash"
+        is_ticket_creation = (
+            any(w in lower_prompt for w in ["ticket", "incident", "bug", "issue"]) and
+            any(v in lower_prompt for v in ["create", "open", "raise", "file", "log", "new", "add"])
+        )
+        if is_ticket_creation:
+            cleaned = re.sub(r'^(?:please\s+|can you\s+|could you\s+|i want to\s+)', '', prompt, flags=re.IGNORECASE)
+            m = re.search(
+                r'(?:create|open|raise|file|log|new|add)\s+(?:a\s+|an\s+|one\s+|the\s+)?(?:new\s+)?(?:p[0-3]\s+)?(?:ticket|incident|bug|issue)\s*(?::|for|regarding|about|titled|-)?\s*(.+)',
+                cleaned,
+                flags=re.IGNORECASE
+            )
+            if m:
+                extracted_title = m.group(1).strip()
+            else:
+                extracted_title = re.sub(
+                    r'^(?:create|open|raise|file|log)\s+(?:one\s+|a\s+|an\s+)?(?:p[0-3]\s+)?(?:ticket|incident|bug|issue)\s*',
+                    '',
+                    cleaned,
+                    flags=re.IGNORECASE
+                ).strip()
+
+            extracted_title = extracted_title.strip("\"' .")
+            if extracted_title:
+                extracted_title = extracted_title[0].upper() + extracted_title[1:]
+            else:
+                extracted_title = "New Incident"
+
+            sev = "high"
+            prio = "P2"
+            if re.search(r'\bp0\b|critical', prompt, re.I):
+                sev = "critical"
+                prio = "P0"
+            elif re.search(r'\bp1\b', prompt, re.I):
+                sev = "critical"
+                prio = "P1"
+            elif re.search(r'\bp3\b|low', prompt, re.I):
+                sev = "medium"
+                prio = "P3"
+            elif re.search(r'\bp2\b|medium', prompt, re.I):
+                sev = "high"
+                prio = "P2"
+
+            res = await execute_tool(
+                session=session,
+                organization_id=organization_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tool_name="create_ticket",
+                arguments={
+                    "title": extracted_title,
+                    "severity": sev,
+                    "priority": prio,
+                },
                 user_permissions=user_permissions,
             )
             return {
@@ -414,26 +586,100 @@ class AIOrchestrator:
                 "blocks": res.get("blocks", []),
             }
 
-        # Intent 5: "Schedule a meeting" / "Find a suitable time for review"
-        if any(k in lower_prompt for k in ["schedule", "meeting", "calendar", "time for", "book", "set up a sync"]):
-            # Extract attendees dynamically
-            attendees = ["alice.pm@acme.com"]
-            if "rahul" in lower_prompt:
-                attendees.append("rahul@acme.com" if "rahul@acme.com" in lower_prompt else "rahul.arch@acme.com")
-            elif "charlie" in lower_prompt:
-                attendees.append("charlie@acme.com")
-            elif "bob" in lower_prompt:
-                attendees.append("bob@globex.com" if "globex" in lower_prompt else "bob@acme.com")
-            else:
-                attendees.append("rahul.arch@acme.com")
+        # Intent 5A: Schedule Inquiries ("What is my schedule now?", "Show my calendar", "Upcoming meetings")
+        if any(k in lower_prompt for k in [
+            "my schedule", "what is my schedule", "what's my schedule", "show schedule",
+            "upcoming meeting", "upcoming events", "my calendar", "meetings today",
+            "scheduled meeting", "my meetings", "what do i have scheduled"
+        ]):
+            res = await execute_tool(
+                session=session,
+                organization_id=organization_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tool_name="get_upcoming_meetings",
+                arguments={"days_ahead": 7},
+                user_permissions=user_permissions,
+            )
+            return {
+                "conversation_id": str(conversation_id),
+                "text": res.get("text", ""),
+                "blocks": res.get("blocks", []),
+            }
 
-            # Check if user requested to book or specified a specific time / slot
-            has_time_specification = any(k in lower_prompt for k in [
-                "2:00", "2 pm", "3:00", "3 pm", "4:00", "4 pm", "10:00", "10 am", "11:00", "11 am", "confirm", "book", "tomorrow"
-            ])
+        # Intent 5B: In-Chat Confirmation ("Confirm", "Yes, schedule it", "Go ahead", "Book it")
+        if any(k in lower_prompt for k in [
+            "confirm", "approve action", "proceed", "go ahead", "book it",
+            "schedule it", "yes please", "yes create", "yes, create",
+            "yes confirm", "yes, confirm", "create it", "schedule now"
+        ]):
+            # Check for active pending proposal in this conversation or organization
+            stmt = (
+                select(AIAction)
+                .where(
+                    AIAction.organization_id == organization_id,
+                    AIAction.status == "WAITING_FOR_CONFIRMATION",
+                )
+                .order_by(AIAction.created_at.desc())
+            )
+            pending_action = (await session.execute(stmt)).scalars().first()
+            if pending_action:
+                try:
+                    await ActionService.confirm_action(
+                        session=session,
+                        organization_id=organization_id,
+                        user_id=user_id,
+                        action_id=pending_action.id,
+                        user_permissions=user_permissions,
+                    )
+                    p = pending_action.payload or {}
+                    start_val = p.get("start_time", "")
+                    try:
+                        start_dt = datetime.fromisoformat(str(start_val).replace("Z", "+00:00"))
+                        fmt_time = start_dt.strftime("%A, %b %d, %Y at %I:%M %p UTC")
+                    except Exception:
+                        fmt_time = str(start_val)
+                    
+                    return {
+                        "conversation_id": str(conversation_id),
+                        "text": (
+                            f"✅ **Meeting successfully scheduled and confirmed!**\n\n"
+                            f"- **Title**: {p.get('title', 'Meeting')}\n"
+                            f"- **Time**: {fmt_time}\n"
+                            f"- **Attendees**: {', '.join(p.get('attendee_emails') or p.get('attendees', []))}\n"
+                            f"- **Location**: {p.get('location', 'Google Meet')}\n\n"
+                            f"The meeting has been confirmed on your calendar and recorded in the audit trail."
+                        ),
+                        "blocks": [],
+                    }
+                except Exception as ex:
+                    return {
+                        "conversation_id": str(conversation_id),
+                        "text": f"⚠️ Could not confirm meeting: {str(ex)}",
+                        "blocks": [],
+                    }
 
-            if has_time_specification:
-                # Retrieve slots first to find a suitable slot or construct requested time
+        # Intent 5C: Meeting Scheduling & Slot Queries
+        if any(k in lower_prompt for k in [
+            "schedule", "meeting", "calendar", "time for", "book", "set up a sync",
+            "create a meeting", "create meeting", "sync with"
+        ]):
+            now = datetime.now(timezone.utc)
+            parsed = parse_meeting_intent(prompt, now=now)
+
+            # Check if user is solely asking to check open slots vs proposing/booking
+            is_slot_query_only = any(k in lower_prompt for k in [
+                "find a time", "find time", "suitable time", "available slot",
+                "check slot", "free time", "open slot", "when is", "what time is"
+            ]) and not any(k in lower_prompt for k in ["create", "book", "schedule for", "set up", "at "])
+
+            if is_slot_query_only or (
+                not parsed["has_explicit_date"]
+                and not parsed["has_explicit_time"]
+                and "create" not in lower_prompt
+                and "book" not in lower_prompt
+                and "schedule for" not in lower_prompt
+            ):
                 slots_res = await execute_tool(
                     session=session,
                     organization_id=organization_id,
@@ -441,41 +687,22 @@ class AIOrchestrator:
                     conversation_id=conversation_id,
                     tool_name="get_calendar_slots",
                     arguments={
-                        "attendee_emails": attendees,
-                        "duration_minutes": 30,
+                        "attendee_emails": parsed["attendees"],
+                        "duration_minutes": parsed["duration_minutes"],
+                        "search_date": parsed["start_time"],
                     },
                     user_permissions=user_permissions,
                 )
-                slots = slots_res.get("data", {}).get("slots", [])
-                
-                # Derive title
-                title = "Project Review"
-                if "architecture" in lower_prompt or "arch" in lower_prompt:
-                    title = "Project Alpha Architecture Gate Review"
-                elif "standup" in lower_prompt:
-                    title = "Daily Standup"
-                elif "sync" in lower_prompt:
-                    title = "Project Sync"
-                elif "planning" in lower_prompt:
-                    title = "Sprint Planning Session"
-
-                # If "tomorrow at 3 pm" or specific time requested
-                now = datetime.now(timezone.utc)
-                if "tomorrow" in lower_prompt and ("3 pm" in lower_prompt or "15:00" in lower_prompt):
-                    tomorrow = now + timedelta(days=1)
-                    req_start = tomorrow.replace(hour=15, minute=0, second=0, microsecond=0)
-                    req_end = req_start + timedelta(minutes=30)
-                    start_iso = req_start.isoformat()
-                    end_iso = req_end.isoformat()
-                elif slots:
-                    slot = slots[1] if len(slots) > 1 else slots[0]
-                    start_iso = slot["start_time"]
-                    end_iso = slot["end_time"]
-                else:
-                    req_start = (now + timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
-                    start_iso = req_start.isoformat()
-                    end_iso = (req_start + timedelta(minutes=30)).isoformat()
-
+                return {
+                    "conversation_id": str(conversation_id),
+                    "text": (
+                        f"I checked the schedule for **{', '.join(parsed['attendees'])}**. "
+                        f"The following {parsed['duration_minutes']}-minute slots are open:"
+                    ),
+                    "blocks": slots_res.get("blocks", []),
+                }
+            else:
+                # Propose the calendar meeting using the exact parsed date, time, and attendees
                 res = await execute_tool(
                     session=session,
                     organization_id=organization_id,
@@ -483,37 +710,17 @@ class AIOrchestrator:
                     conversation_id=conversation_id,
                     tool_name="propose_calendar_meeting",
                     arguments={
-                        "title": title,
-                        "attendee_emails": attendees,
-                        "start_time": start_iso,
-                        "end_time": end_iso,
-                        "description": f"Scheduled via PM Buddy for {title}.",
+                        "title": parsed["title"],
+                        "attendee_emails": parsed["attendees"],
+                        "start_time": parsed["start_time"],
+                        "end_time": parsed["end_time"],
+                        "description": f"Scheduled via PM Buddy for {parsed['title']}.",
                     },
                     user_permissions=user_permissions,
                 )
                 return {
                     "conversation_id": str(conversation_id),
                     "text": res.get("text", ""),
-                    "blocks": res.get("blocks", []),
-                }
-            else:
-                res = await execute_tool(
-                    session=session,
-                    organization_id=organization_id,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    tool_name="get_calendar_slots",
-                    arguments={
-                        "attendee_emails": attendees,
-                        "duration_minutes": 30,
-                    },
-                    user_permissions=user_permissions,
-                )
-                return {
-                    "conversation_id": str(conversation_id),
-                    "text": (
-                        f"I checked the schedule for **{', '.join(attendees)}**. The following 30-minute slots are open:"
-                    ),
                     "blocks": res.get("blocks", []),
                 }
 

@@ -1,0 +1,45 @@
+﻿# Git
+.git
+.gitignore
+
+# Python virtual environment (critical: host venv must never be copied into container)
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing & coverage artifacts
+tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local secrets & environment files
+.env
+.env.*
+!.env.example
+
+# IDE & OS temporary files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temporary runtime files
+*.log
+logs/
+tmp/
+temp/
+*.tmp

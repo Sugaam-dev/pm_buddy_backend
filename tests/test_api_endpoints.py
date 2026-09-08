@@ -35,3 +35,29 @@ async def test_auth_login_and_me():
         assert me_data["email"] == "alice@acme.com"
         assert me_data["role"] == "PM"
         assert "project.read" in me_data["permissions"]
+
+
+@pytest.mark.asyncio
+async def test_auth_signup():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Signup with new user
+        signup_res = await client.post("/api/v1/auth/signup", json={
+            "name": "New Developer",
+            "email": "developer.test@acme.com",
+            "password": "Password123!",
+        })
+        assert signup_res.status_code == 201
+        data = signup_res.json()
+        assert "access_token" in data
+        assert data["user"]["role"] == "VIEWER"
+        assert "admin" not in data["user"]["permissions"]
+        assert "*" not in data["user"]["permissions"]
+
+        # 2. Duplicate signup should be rejected
+        dup_res = await client.post("/api/v1/auth/signup", json={
+            "name": "Duplicate Developer",
+            "email": "developer.test@acme.com",
+            "password": "Password123!",
+        })
+        assert dup_res.status_code == 400

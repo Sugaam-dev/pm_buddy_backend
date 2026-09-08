@@ -71,3 +71,59 @@ class TaskService:
         # Order by highest priority score first
         items.sort(key=lambda x: x["priority_score"], reverse=True)
         return items
+
+    @staticmethod
+    async def create_task(
+        session: AsyncSession,
+        organization_id: UUID,
+        title: str,
+        description: str | None = None,
+        priority: str = "P2",
+        status: str = "todo",
+        assignee_id: UUID | None = None,
+        project_id: UUID | None = None,
+        due_date: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new task/to-do item."""
+        if not project_id:
+            proj_stmt = (
+                select(Project.id)
+                .where(
+                    Project.organization_id == organization_id,
+                    Project.deleted_at.is_(None)
+                )
+                .limit(1)
+            )
+            project_id = (await session.execute(proj_stmt)).scalar_one_or_none()
+
+        priority_clean = priority.upper() if priority and priority.upper() in ["P0", "P1", "P2", "P3"] else "P2"
+        score_map = {"P0": 95, "P1": 75, "P2": 50, "P3": 25}
+
+        new_task = Task(
+            organization_id=organization_id,
+            project_id=project_id,
+            title=title.strip(),
+            description=description or "",
+            priority=priority_clean,
+            priority_score=score_map.get(priority_clean, 50),
+            status=status or "todo",
+            assignee_id=assignee_id,
+            due_date=due_date,
+        )
+        session.add(new_task)
+        await session.flush()
+        await session.commit()
+
+        return {
+            "id": str(new_task.id),
+            "project_id": str(new_task.project_id) if new_task.project_id else None,
+            "title": new_task.title,
+            "description": new_task.description,
+            "status": new_task.status,
+            "priority": new_task.priority,
+            "priority_score": new_task.priority_score,
+            "assignee_id": str(new_task.assignee_id) if new_task.assignee_id else None,
+            "due_date": new_task.due_date.isoformat() if new_task.due_date else None,
+            "is_blocked": new_task.is_blocked,
+            "blocker_reason": new_task.blocker_reason,
+        }

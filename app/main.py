@@ -44,11 +44,12 @@ app = FastAPI(
 
 # CORS Middleware
 raw_origins = [
-    origin.strip()
+    origin.strip().rstrip("/")
     for origin in settings.FRONTEND_URL.split(",")
     if origin.strip()
 ]
 origins = list(set(raw_origins + [
+    "https://pm-buddy-frontend.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]))

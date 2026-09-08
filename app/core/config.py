@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Application
     ENVIRONMENT: Literal["development", "production", "test"] = "development"
     APP_NAME: str = "PM Buddy - AI Operations Platform"
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "https://pm-buddy-frontend.vercel.app,http://localhost:3000"
     BACKEND_URL: str = "http://localhost:8000"
     ENCRYPTION_KEY: str = "dGhpcy1pcy1hLTMyLWJ5dGUtc2VjcmV0LWtleS0xMjM="  # Base64 32-byte key
 

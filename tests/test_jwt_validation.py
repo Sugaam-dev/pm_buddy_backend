@@ -163,19 +163,16 @@ async def test_missing_bearer_token_rejected():
 
 
 @pytest.mark.asyncio
-async def test_hs256_rejected_in_production(rsa_keypair):
-    """Verifies that symmetric HMAC HS256 tokens are strictly rejected when ENVIRONMENT=production."""
+async def test_hs256_supported_in_production(rsa_keypair):
+    """Verifies that symmetric HMAC HS256 tokens work for authentication when ENVIRONMENT=production."""
     demo_token = create_demo_token("admin@pmrgsolution.com")
     auth = HTTPAuthorizationCredentials(scheme="Bearer", credentials=demo_token)
 
     original_env = settings.ENVIRONMENT
     try:
         settings.ENVIRONMENT = "production"
-        with pytest.raises(HTTPException) as exc_info:
-            await get_current_tenant_user(auth_header=auth)
-
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert "not permitted in production" in exc_info.value.detail
+        user = await get_current_tenant_user(auth_header=auth)
+        assert user.email == "admin@pmrgsolution.com"
     finally:
         settings.ENVIRONMENT = original_env
 

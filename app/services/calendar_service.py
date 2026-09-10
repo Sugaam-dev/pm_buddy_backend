@@ -101,6 +101,7 @@ class CalendarService:
         project_id: Optional[UUID] = None,
         status_filter: Optional[str] = None,
         user_email: Optional[str] = None,
+        user_id: Optional[UUID] = None,
     ) -> list[dict[str, Any]]:
         """List calendar events for an organization with optional time, project, and status filters."""
         query = select(CalendarEvent).where(CalendarEvent.organization_id == organization_id)
@@ -138,10 +139,29 @@ class CalendarService:
         result = []
         for evt in events:
             p_list = participants_by_event.get(evt.id, [])
-            if user_email:
+            if user_email or user_id:
+                u_email_clean = user_email.lower().strip() if user_email else None
+                u_id_str = str(user_id) if user_id else None
+
                 attendee_set = {str(a).lower().strip() for a in (evt.attendees or [])}
-                p_emails = {p["user_email"].lower().strip() for p in p_list}
-                if user_email.lower().strip() not in attendee_set and user_email.lower().strip() not in p_emails:
+                p_emails = {p["user_email"].lower().strip() for p in p_list if p.get("user_email")}
+                p_user_ids = {p["user_id"] for p in p_list if p.get("user_id")}
+
+                is_creator = False
+                if u_id_str:
+                    if (evt.created_by and str(evt.created_by) == u_id_str) or (evt.organizer_id and str(evt.organizer_id) == u_id_str):
+                        is_creator = True
+
+                is_attendee = False
+                if u_email_clean:
+                    if u_email_clean in attendee_set or u_email_clean in p_emails:
+                        is_attendee = True
+
+                is_participant_user = False
+                if u_id_str and u_id_str in p_user_ids:
+                    is_participant_user = True
+
+                if not (is_creator or is_attendee or is_participant_user):
                     continue
 
             result.append({
@@ -172,6 +192,8 @@ class CalendarService:
         session: AsyncSession,
         organization_id: UUID,
         event_id: UUID,
+        user_email: Optional[str] = None,
+        user_id: Optional[UUID] = None,
     ) -> dict[str, Any]:
         """Fetch a single calendar event by ID with its participants."""
         stmt = select(CalendarEvent).where(
@@ -184,6 +206,40 @@ class CalendarService:
 
         p_stmt = select(CalendarEventParticipant).where(CalendarEventParticipant.event_id == evt.id)
         participants = (await session.execute(p_stmt)).scalars().all()
+        p_list = [
+            {
+                "id": str(p.id),
+                "user_email": p.user_email,
+                "user_id": str(p.user_id) if p.user_id else None,
+                "response_status": p.response_status,
+            }
+            for p in participants
+        ]
+
+        if user_email or user_id:
+            u_email_clean = user_email.lower().strip() if user_email else None
+            u_id_str = str(user_id) if user_id else None
+
+            attendee_set = {str(a).lower().strip() for a in (evt.attendees or [])}
+            p_emails = {p["user_email"].lower().strip() for p in p_list if p.get("user_email")}
+            p_user_ids = {p["user_id"] for p in p_list if p.get("user_id")}
+
+            is_creator = False
+            if u_id_str:
+                if (evt.created_by and str(evt.created_by) == u_id_str) or (evt.organizer_id and str(evt.organizer_id) == u_id_str):
+                    is_creator = True
+
+            is_attendee = False
+            if u_email_clean:
+                if u_email_clean in attendee_set or u_email_clean in p_emails:
+                    is_attendee = True
+
+            is_participant_user = False
+            if u_id_str and u_id_str in p_user_ids:
+                is_participant_user = True
+
+            if not (is_creator or is_attendee or is_participant_user):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar event not found.")
 
         return {
             "id": str(evt.id),
@@ -194,15 +250,7 @@ class CalendarService:
             "start_time": evt.start_time.isoformat(),
             "end_time": evt.end_time.isoformat(),
             "attendees": evt.attendees or [],
-            "participants": [
-                {
-                    "id": str(p.id),
-                    "user_email": p.user_email,
-                    "user_id": str(p.user_id) if p.user_id else None,
-                    "response_status": p.response_status,
-                }
-                for p in participants
-            ],
+            "participants": p_list,
             "project_id": str(evt.project_id) if evt.project_id else None,
             "timezone": evt.timezone,
             "location": evt.location,
@@ -245,9 +293,18 @@ class CalendarService:
         # Clean attendees & enforce tenant isolation
         clean_attendees = list({a.strip() for a in attendees if a.strip()})
         from app.core.security import DEMO_USERS
+        if user_id:
+            creator_email = None
+            for email, u_data in DEMO_USERS.items():
+                if u_data.get("user_id") == user_id:
+                    creator_email = email
+                    break
+            if creator_email and creator_email not in [a.lower() for a in clean_attendees]:
+                clean_attendees.append(creator_email)
+        from app.core.security import DEMO_USERS
         for email in clean_attendees:
             u_info = DEMO_USERS.get(email.lower())
-            if u_info and u_info["organization_id"] != organization_id:
+            if meeting_type != "external" and u_info and u_info["organization_id"] != organization_id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Cross-tenant scheduling forbidden: Attendee '{email}' belongs to a different organization."

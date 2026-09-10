@@ -26,12 +26,15 @@ if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 connect_args = {}
-if "supabase.co" in db_url or "ssl=true" in db_url.lower():
+if "supabase" in db_url or "ssl=true" in db_url.lower():
     import ssl
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     connect_args["ssl"] = ctx
+
+connect_args["statement_cache_size"] = 0
+connect_args["prepared_statement_cache_size"] = 0
 
 engine = create_async_engine(
     db_url,

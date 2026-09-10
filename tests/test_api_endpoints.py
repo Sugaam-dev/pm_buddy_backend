@@ -19,7 +19,7 @@ async def test_auth_login_and_me():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 1. Login with demo user
-        login_res = await client.post("/api/v1/auth/login", json={"email": "alice@acme.com"})
+        login_res = await client.post("/api/v1/auth/login", json={"email": "pm@pmrgsolution.com", "password": "pmrgsolution123"})
         assert login_res.status_code == 200
         token_data = login_res.json()
         assert "access_token" in token_data
@@ -32,7 +32,7 @@ async def test_auth_login_and_me():
         )
         assert me_res.status_code == 200
         me_data = me_res.json()
-        assert me_data["email"] == "alice@acme.com"
+        assert me_data["email"] == "pm@pmrgsolution.com"
         assert me_data["role"] == "PM"
         assert "project.read" in me_data["permissions"]
 

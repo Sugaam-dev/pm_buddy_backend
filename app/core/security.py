@@ -49,142 +49,238 @@ def decrypt_token(encrypted_token: str) -> str:
     return cipher.decrypt(encrypted_token.encode()).decode()
 
 
-# In-memory mock users for standalone development/testing & persona switching
+# In-memory mock users for standalone development/testing & auth
 DEMO_USERS: dict[str, dict[str, Any]] = {
-    "sarah@acme.com": {
+    # -------------------------------------------------------------------------
+    # 1. Client-Specific Account: Organization NextGen
+    # -------------------------------------------------------------------------
+    "admin@nextgen.com": {
+        "user_id": UUID("20000000-0000-0000-0000-000000000001"),
+        "email": "admin@nextgen.com",
+        "name": "NextGen Admin",
+        "organization_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "role_name": "client_ai_admin",
+        "password": "NextGenBroaDband@123",
+        "permissions": [
+            "project.read",
+            "task.read",
+            "task.create",
+            "task.write",
+            "ticket.read",
+            "ticket.create",
+            "ticket.write",
+            "calendar.read",
+            "calendar.write",
+            "action.execute",
+            "risk.read",
+            "knowledge.read",
+            "ai.chat",
+            "ai.read",
+            "ai_config.manage",
+        ],
+    },
+    "client.admin@nextgen.com": {
+        "user_id": UUID("20000000-0000-0000-0000-000000000001"),
+        "email": "client.admin@nextgen.com",
+        "name": "NextGen Admin",
+        "organization_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "role_name": "client_ai_admin",
+        "password": "NextGenBroaDband@123",
+        "permissions": [
+            "project.read",
+            "task.read",
+            "task.create",
+            "task.write",
+            "ticket.read",
+            "ticket.create",
+            "ticket.write",
+            "calendar.read",
+            "calendar.write",
+            "risk.read",
+            "knowledge.read",
+            "ai.chat",
+            "ai.read",
+            "ai_config.manage",
+        ],
+    },
+    "operator@nextgen.com": {
+        "user_id": UUID("20000000-0000-0000-0000-000000000002"),
+        "email": "operator@nextgen.com",
+        "name": "NextGen Operator",
+        "organization_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "role_name": "client_operator",
+        "password": "Operator@nextGenIndia",
+        "permissions": [
+            "project.read",
+            "task.read",
+            "task.create",
+            "task.write",
+            "ticket.read",
+            "ticket.create",
+            "calendar.read",
+            "calendar.write",
+            "calendar.meeting.confirm",
+            "risk.read",
+            "knowledge.read",
+            "ai.chat",
+            "ai.read",
+        ],
+    },
+    "client.operator@nextgen.com": {
+        "user_id": UUID("20000000-0000-0000-0000-000000000002"),
+        "email": "client.operator@nextgen.com",
+        "name": "NextGen Operator",
+        "organization_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "role_name": "client_operator",
+        "password": "Operator@nextGenIndia",
+        "permissions": [
+            "project.read",
+            "task.read",
+            "task.create",
+            "task.write",
+            "ticket.read",
+            "ticket.create",
+            "calendar.read",
+            "calendar.write",
+            "calendar.meeting.confirm",
+            "risk.read",
+            "knowledge.read",
+            "ai.chat",
+            "ai.read",
+        ],
+    },
+
+    # -------------------------------------------------------------------------
+    # 2. Internal Team & Engineering Credentials: Organization PMRG Solution
+    # -------------------------------------------------------------------------
+    "admin@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000004"),
-        "email": "sarah@acme.com",
-        "name": "Sarah Admin",
+        "email": "admin@pmrgsolution.com",
+        "name": "PMRG Admin",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "admin",
+        "password": "pmrgsolution123",
         "permissions": ["*"],
     },
-    "alice@acme.com": {
+    "pm@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000001"),
-        "email": "alice@acme.com",
-        "name": "Alice PM",
+        "email": "pm@pmrgsolution.com",
+        "name": "PMRG Project Manager",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "PM",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "project.write", "task.read", "task.write",
-            "ticket.read", "ticket.write", "ticket.assign", "approval.read",
-            "approval.approve", "risk.read", "risk.write", "calendar.read", "calendar.write",
-            "ai.chat", "action.execute"
+            "project.read",
+            "project.write",
+            "task.read",
+            "task.write",
+            "ticket.read",
+            "ticket.write",
+            "ticket.assign",
+            "approval.read",
+            "approval.approve",
+            "risk.read",
+            "risk.write",
+            "calendar.read",
+            "calendar.write",
+            "ai.chat",
+            "action.execute",
         ],
     },
-    "charlie@acme.com": {
+    "cto@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000003"),
-        "email": "charlie@acme.com",
-        "name": "Charlie CTO",
+        "email": "cto@pmrgsolution.com",
+        "name": "PMRG CTO",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "CTO",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "project.write", "task.read", "ticket.read",
-            "approval.read", "approval.approve", "risk.read", "risk.write",
-            "calendar.read", "calendar.write", "ai.chat", "action.execute"
+            "project.read",
+            "project.write",
+            "task.read",
+            "ticket.read",
+            "approval.read",
+            "approval.approve",
+            "risk.read",
+            "risk.write",
+            "calendar.read",
+            "calendar.write",
+            "ai.chat",
+            "action.execute",
         ],
     },
-    "bob@acme.com": {
+    "lead@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000002"),
-        "email": "bob@acme.com",
-        "name": "Bob Lead",
+        "email": "lead@pmrgsolution.com",
+        "name": "PMRG Team Lead",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "TEAM_LEAD",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "task.read", "task.write", "ticket.read",
-            "ticket.write", "ticket.assign", "approval.read", "risk.read",
-            "calendar.read", "calendar.write", "ai.chat", "action.execute"
+            "project.read",
+            "task.read",
+            "task.write",
+            "ticket.read",
+            "ticket.write",
+            "ticket.assign",
+            "approval.read",
+            "risk.read",
+            "calendar.read",
+            "calendar.write",
+            "ai.chat",
+            "action.execute",
         ],
     },
-    "rahul@acme.com": {
+    "engineer@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000005"),
-        "email": "rahul@acme.com",
-        "name": "Rahul Eng",
+        "email": "engineer@pmrgsolution.com",
+        "name": "PMRG Engineer",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "ENGINEER",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "task.read", "task.write", "ticket.read",
-            "ticket.write", "calendar.read", "ai.chat"
+            "project.read",
+            "task.read",
+            "task.write",
+            "ticket.read",
+            "ticket.write",
+            "calendar.read",
+            "calendar.write",
+            "ai.chat",
         ],
     },
-    "dave@acme.com": {
+    "viewer@pmrgsolution.com": {
         "user_id": UUID("10000000-0000-0000-0000-000000000009"),
-        "email": "dave@acme.com",
-        "name": "Dave Viewer",
+        "email": "viewer@pmrgsolution.com",
+        "name": "PMRG Viewer",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "VIEWER",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "task.read", "ticket.read", "approval.read",
-            "risk.read", "calendar.read"
+            "project.read",
+            "task.read",
+            "ticket.read",
+            "approval.read",
+            "risk.read",
+            "calendar.read",
         ],
     },
-    # Aliases matching seed data / calendar connections
-    "alice.pm@acme.com": {
-        "user_id": UUID("10000000-0000-0000-0000-000000000001"),
-        "email": "alice.pm@acme.com",
-        "name": "Alice PM",
-        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
-        "role_name": "PM",
-        "permissions": [
-            "project.read", "project.write", "task.read", "task.write",
-            "ticket.read", "ticket.write", "ticket.assign", "approval.read",
-            "approval.approve", "risk.read", "risk.write", "calendar.read", "calendar.write",
-            "ai.chat", "action.execute"
-        ],
-    },
-    "rahul.arch@acme.com": {
-        "user_id": UUID("10000000-0000-0000-0000-000000000005"),
-        "email": "rahul.arch@acme.com",
-        "name": "Rahul Eng",
+    "rahul@pmrgsolution.com": {
+        "user_id": UUID("10000000-0000-0000-0000-000000000010"),
+        "email": "rahul@pmrgsolution.com",
+        "name": "Rahul Sharma",
         "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
         "role_name": "ENGINEER",
+        "password": "pmrgsolution123",
         "permissions": [
-            "project.read", "task.read", "task.write", "ticket.read",
-            "ticket.write", "calendar.read", "calendar.write", "ai.chat"
-        ],
-    },
-    "bob.lead@acme.com": {
-        "user_id": UUID("10000000-0000-0000-0000-000000000002"),
-        "email": "bob.lead@acme.com",
-        "name": "Bob Lead",
-        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
-        "role_name": "TEAM_LEAD",
-        "permissions": [
-            "project.read", "task.read", "task.write", "ticket.read",
-            "ticket.write", "ticket.assign", "approval.read", "risk.read",
-            "calendar.read", "calendar.write", "ai.chat", "action.execute"
-        ],
-    },
-    "charlie.cto@acme.com": {
-        "user_id": UUID("10000000-0000-0000-0000-000000000003"),
-        "email": "charlie.cto@acme.com",
-        "name": "Charlie CTO",
-        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
-        "role_name": "CTO",
-        "permissions": [
-            "project.read", "project.write", "task.read", "ticket.read",
-            "approval.read", "approval.approve", "risk.read", "risk.write",
-            "calendar.read", "calendar.write", "ai.chat", "action.execute"
-        ],
-    },
-    "sarah.admin@acme.com": {
-        "user_id": UUID("10000000-0000-0000-0000-000000000004"),
-        "email": "sarah.admin@acme.com",
-        "name": "Sarah Admin",
-        "organization_id": UUID("11111111-1111-1111-1111-111111111111"),
-        "role_name": "admin",
-        "permissions": ["*"],
-    },
-    "bob@globex.com": {
-        "user_id": UUID("20000000-0000-0000-0000-000000000001"),
-        "email": "bob@globex.com",
-        "name": "Bob Globex (Other Org)",
-        "organization_id": UUID("22222222-2222-2222-2222-222222222222"),
-        "role_name": "PM",
-        "permissions": [
-            "project.read", "project.write", "task.read", "task.write",
-            "ticket.read", "ticket.write", "ticket.assign", "approval.read",
-            "risk.read", "calendar.read", "calendar.write", "ai.chat"
+            "project.read",
+            "task.read",
+            "task.write",
+            "ticket.read",
+            "ticket.write",
+            "calendar.read",
+            "calendar.write",
+            "ai.chat",
         ],
     },
 }
@@ -298,8 +394,10 @@ def create_test_rs256_token(
 
 async def get_current_tenant_user(
     auth_header: Annotated[HTTPAuthorizationCredentials | None, Security(security_bearer)],
-    x_org_id: Annotated[str | None, Header()] = None,
+    x_org_id: Annotated[str | None, Header(alias="X-Org-ID")] = None,
+    x_organization_id: Annotated[str | None, Header(alias="X-Organization-ID")] = None,
 ) -> CurrentTenantUser:
+    effective_header_org = x_organization_id or x_org_id
     """
     Validates token and extracts user, tenant, role, and permissions.
     - Validates RS256 tokens using Supabase Auth JWKS public keys.
@@ -387,19 +485,28 @@ async def get_current_tenant_user(
             or "unknown@user.com"
         )
 
-        # Resolve organization_id
-        raw_org = (
-            x_org_id
-            or payload.get("org_id")
+        # Resolve organization_id strictly from token claims
+        token_org = (
+            payload.get("org_id")
             or payload.get("app_metadata", {}).get("org_id")
             or payload.get("user_metadata", {}).get("org_id")
         )
-
-        if not raw_org:
-            if email in DEMO_USERS:
-                raw_org = str(DEMO_USERS[email]["organization_id"])
-            else:
-                raw_org = "11111111-1111-1111-1111-111111111111"
+        if token_org:
+            if effective_header_org and str(effective_header_org).strip() != str(token_org).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant context mismatch: header does not match authenticated token organization."
+                )
+            raw_org = token_org
+        elif email in DEMO_USERS:
+            raw_org = str(DEMO_USERS[email]["organization_id"])
+            if effective_header_org and str(effective_header_org).strip() != str(raw_org).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant context mismatch: header does not match authenticated user organization."
+                )
+        else:
+            raw_org = effective_header_org or "11111111-1111-1111-1111-111111111111"
 
         try:
             org_id = UUID(str(raw_org))
@@ -427,6 +534,18 @@ async def get_current_tenant_user(
                         "approval.approve", "risk.read", "calendar.read", "calendar.write",
                         "ai.chat", "action.execute"
                     ]
+                elif role_name == "client_operator":
+                    permissions = [
+                        "project.read", "task.read", "ticket.read", "ticket.create", "ticket.write",
+                        "calendar.read", "calendar.write", "action.execute", "risk.read",
+                        "knowledge.read", "ai.chat", "ai.read"
+                    ]
+                elif role_name == "client_ai_admin":
+                    permissions = [
+                        "project.read", "task.read", "ticket.read", "ticket.create", "ticket.write",
+                        "calendar.read", "calendar.write", "action.execute", "risk.read",
+                        "knowledge.read", "ai.chat", "ai.read", "ai_config.manage"
+                    ]
                 else:
                     permissions = ["project.read", "task.read", "ticket.read", "ai.chat"]
 
@@ -447,18 +566,20 @@ async def get_current_tenant_user(
         )
 
 
-def require_permission(required_perm: str):
-    """Factory for RBAC permission guard dependency."""
+def require_permission(required_perm: str | list[str] | tuple[str, ...]):
+    """Factory for RBAC permission guard dependency. Supports single permission or list of alternative permissions."""
     def permission_checker(current_user: Annotated[CurrentTenantUser, Depends(get_current_tenant_user)]):
-        if (
-            required_perm not in current_user.permissions
-            and "*" not in current_user.permissions
-            and "all" not in current_user.permissions
-            and "admin" not in current_user.permissions
-        ):
+        perms = [required_perm] if isinstance(required_perm, str) else list(required_perm)
+        has_wildcard = (
+            "*" in current_user.permissions
+            or "all" in current_user.permissions
+            or "admin" in current_user.permissions
+        )
+        has_required = has_wildcard or any(p in current_user.permissions for p in perms)
+        if not has_required:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"User does not have required permission '{required_perm}' in this organization."
+                detail="You do not have permission to perform this action in this organization.",
             )
         return current_user
     return permission_checker

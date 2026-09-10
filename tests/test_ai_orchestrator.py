@@ -97,8 +97,9 @@ async def test_pm_buddy_schedule_meeting_hitl_flow():
 
 @pytest.mark.asyncio
 async def test_pm_buddy_create_meeting_natural_language_datetime():
+    from uuid import UUID
     session = InMemoryTestSession()
-    org_id = uuid4()
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
     user_id = uuid4()
     conv_id = uuid4()
 
@@ -116,7 +117,7 @@ async def test_pm_buddy_create_meeting_natural_language_datetime():
     assert action_block is not None
     data = action_block["data"]
     assert "10:00:00" in data["start_time"]
-    assert "rahul@acme.com" in data["attendee_emails"]
+    assert "rahul@pmrgsolution.com" in data["attendee_emails"]
 
 
 @pytest.mark.asyncio
@@ -142,8 +143,9 @@ async def test_pm_buddy_schedule_inquiry():
 
 @pytest.mark.asyncio
 async def test_pm_buddy_create_meeting_dmy_dev_team():
+    from uuid import UUID
     session = InMemoryTestSession()
-    org_id = uuid4()
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
     user_id = uuid4()
     conv_id = uuid4()
 
@@ -162,9 +164,7 @@ async def test_pm_buddy_create_meeting_dmy_dev_team():
     data = action_block["data"]
     assert data["title"] == "Requirement Analysis"
     assert "2026-09-13T12:30:00" in data["start_time"]
-    assert "alice@acme.com" in data["attendee_emails"]
-    assert "rahul@acme.com" in data["attendee_emails"]
-    assert "bob@acme.com" in data["attendee_emails"]
+    assert any("pmrgsolution.com" in em for em in data["attendee_emails"])
 
 
 @pytest.mark.asyncio

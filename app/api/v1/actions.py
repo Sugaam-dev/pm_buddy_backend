@@ -20,7 +20,7 @@ async def confirm_action(
     action_id: UUID,
     req: ConfirmActionRequest = ConfirmActionRequest(),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    user: CurrentTenantUser = Depends(require_permission("action.execute")),
+    user: CurrentTenantUser = Depends(require_permission(["action.execute", "calendar.meeting.confirm"])),
     db: AsyncSession = Depends(get_db),
 ):
     key = idempotency_key or req.idempotency_key
@@ -37,7 +37,7 @@ async def confirm_action(
 @router.post("/{action_id}/cancel")
 async def cancel_action(
     action_id: UUID,
-    user: CurrentTenantUser = Depends(require_permission("action.execute")),
+    user: CurrentTenantUser = Depends(require_permission(["action.execute", "calendar.meeting.confirm"])),
     db: AsyncSession = Depends(get_db),
 ):
     return await ActionService.cancel_action(

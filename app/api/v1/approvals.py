@@ -1,5 +1,6 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -32,3 +33,27 @@ async def get_blocking_approvers(
     db: AsyncSession = Depends(get_db),
 ):
     return await ApprovalService.get_blocking_approvers(db, user.organization_id)
+
+
+class DecisionRequest(BaseModel):
+    decision: str  # "approved" or "rejected"
+    notes: str | None = None
+
+
+@router.post("/{approval_id}/decide")
+async def decide_approval(
+    approval_id: UUID,
+    req: DecisionRequest,
+    user: CurrentTenantUser = Depends(require_permission("approval.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await ApprovalService.decide_step(
+        session=db,
+        organization_id=user.organization_id,
+        approval_id=approval_id,
+        user_id=user.user_id,
+        decision=req.decision,
+        notes=req.notes,
+    )
+    await db.commit()
+    return res

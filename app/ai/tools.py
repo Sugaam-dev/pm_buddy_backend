@@ -168,6 +168,7 @@ class CreateTicketInput(BaseModel):
     description: Optional[str] = Field("", description="Detailed incident description")
     category: Optional[str] = Field("Infrastructure", description="Ticket category")
     affected_service: Optional[str] = Field(None, description="Affected service name")
+    project_id: Optional[str] = Field(None, description="Optional associated project UUID")
 
 
 # ---------------------------------------------------------------------------
@@ -423,12 +424,21 @@ async def _exec_get_upcoming_meetings(
     now = datetime.now(timezone.utc)
     end_window = now + timedelta(days=args.days_ahead)
     proj_id = UUID(args.project_id) if args.project_id else None
+    user_email = None
+    from app.core.security import DEMO_USERS
+    for email, u_data in DEMO_USERS.items():
+        if u_data.get("user_id") == user_id:
+            user_email = email
+            break
+
     events = await CalendarService.list_events(
         session=session,
         organization_id=organization_id,
         start_time=now,
         end_time=end_window,
         project_id=proj_id,
+        user_email=user_email,
+        user_id=user_id,
     )
 
     if not events:
@@ -506,15 +516,21 @@ async def _exec_get_tickets(
     warning = [t for t in tickets if t.get("sla_status") == "warning"]
 
     text = (
-        f"Found **{len(tickets)} tickets** matching criteria.\n\n"
+        f"Found **{len(tickets)} ticket(s)** matching criteria.\n\n"
         f"- **Breached**: {len(breached)}\n"
         f"- **At Immediate Risk**: {len(warning)}\n\n"
     )
     if tickets:
-        top = tickets[0]
-        text += f"**Top Critical Incident**: {top['ticket_number']} — *{top['title']}* ({top['severity'].upper()})"
+        text += "**Active Tickets:**\n"
+        for t in tickets:
+            sla_mark = "⚠️ SLA Breached" if t.get("is_breached") else ("⚡ At Risk" if t.get("sla_status") == "warning" else "✅ SLA Healthy")
+            sev = t.get("severity", "medium").upper()
+            status_label = t.get("status", "open").replace("_", " ").title()
+            text += f"- **[{t['ticket_number']}] {t['title']}** — `{sev}` | `{status_label}` | {sla_mark}\n"
+    else:
+        text += "No tickets found matching your query."
 
-    blocks = [{"type": "table", "title": "Incident & Support Tickets", "data": tickets}]
+    blocks = [{"type": "ticket_list", "title": "Incident & Support Tickets", "data": tickets}]
     return {"text": text, "blocks": blocks, "data": {"tickets": tickets}}
 
 
@@ -851,6 +867,13 @@ async def _exec_create_ticket(
     conversation_id: UUID,
     args: CreateTicketInput,
 ) -> dict[str, Any]:
+    project_uuid = None
+    if args.project_id:
+        try:
+            project_uuid = UUID(args.project_id)
+        except (ValueError, TypeError):
+            pass
+
     created = await TicketService.create_ticket(
         session=session,
         organization_id=organization_id,
@@ -861,6 +884,7 @@ async def _exec_create_ticket(
         category=args.category or "Infrastructure",
         affected_service=args.affected_service,
         assignee_id=user_id,
+        project_id=project_uuid,
     )
 
     text = (
@@ -898,7 +922,7 @@ TOOL_METADATA: dict[str, ToolDefinition] = {
         description="Creates a new incident, bug, or support ticket with SLA tracking.",
         schema_class=CreateTicketInput,
         is_sensitive=False,
-        required_permission="ticket.write",
+        required_permission="ticket.create",
         executor=_exec_create_ticket,
     ),
     "get_my_work": ToolDefinition(
@@ -1010,7 +1034,7 @@ TOOL_METADATA: dict[str, ToolDefinition] = {
         description="Proposes assigning an incident ticket to a team member. Requires human confirmation.",
         schema_class=ProposeTicketAssignmentInput,
         is_sensitive=True,
-        required_permission="ticket.write",
+        required_permission="ticket.assign",
         action_type="assign_ticket",
     ),
     "propose_escalation": ToolDefinition(
@@ -1136,8 +1160,12 @@ async def execute_tool(
         }
 
     # 1. RBAC Permission Check
+    req_perm = tool_def.required_permission
     has_permission = (
-        tool_def.required_permission in user_permissions
+        req_perm in user_permissions
+        or (req_perm == "ticket.create" and "ticket.write" in user_permissions)
+        or (req_perm in ("task.write", "task.create") and any(p in user_permissions for p in ("task.write", "task.create", "task.read")))
+        or any(p.endswith(".*") and req_perm.startswith(p[:-2]) for p in user_permissions)
         or "*" in user_permissions
         or "admin" in user_permissions
     )
@@ -1150,8 +1178,8 @@ async def execute_tool(
         )
         return {
             "success": False,
-            "error": f"Permission denied: Missing '{tool_def.required_permission}' for tool '{tool_name}'.",
-            "text": f"You do not have permission (`{tool_def.required_permission}`) to perform `{tool_name}`.",
+            "error": f"Permission denied for tool '{tool_name}'.",
+            "text": "You do not have permission to perform this action in this organization.",
             "blocks": [],
             "data": {"required_permission": tool_def.required_permission},
         }
@@ -1180,6 +1208,7 @@ async def execute_tool(
             tool_name=tool_name,
             action_type=action_type,
             payload=payload,
+            user_id=user_id,
         )
 
         title_display = tool_name.replace("_", " ").title()
@@ -1198,6 +1227,7 @@ async def execute_tool(
             m_end = payload.get("end_time", "")
             m_attendees = ", ".join(payload.get("attendee_emails", []))
             m_proj = payload.get("project_id") or "General"
+            m_type = payload.get("meeting_type") or "internal"
             try:
                 dt_start = datetime.fromisoformat(m_start)
                 dt_end = datetime.fromisoformat(m_end)
@@ -1209,6 +1239,7 @@ async def execute_tool(
                 f"### 📅 Proposed Meeting: **{m_title}**\n\n"
                 f"- **Time**: {time_range}\n"
                 f"- **Participants**: {m_attendees}\n"
+                f"- **Meeting Type**: `{m_type.capitalize()}`\n"
                 f"- **Project**: {m_proj}\n"
                 f"- **Status**: ✓ No initial conflicts detected\n\n"
                 f"**Human confirmation is required.** Would you like me to schedule it? Please confirm or cancel using the approval card below."

@@ -165,7 +165,7 @@ async def test_missing_bearer_token_rejected():
 @pytest.mark.asyncio
 async def test_hs256_rejected_in_production(rsa_keypair):
     """Verifies that symmetric HMAC HS256 tokens are strictly rejected when ENVIRONMENT=production."""
-    demo_token = create_demo_token("alice@acme.com")
+    demo_token = create_demo_token("admin@pmrgsolution.com")
     auth = HTTPAuthorizationCredentials(scheme="Bearer", credentials=demo_token)
 
     original_env = settings.ENVIRONMENT

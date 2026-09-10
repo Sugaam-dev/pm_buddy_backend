@@ -1,96 +1,13 @@
-# ================================
-# PM Buddy Backend - FastAPI/Python
-# ================================
+# ================================================
+# PM Buddy Backend - .gitignore
+# FastAPI / Python production safety rules
+# ================================================
 
-# Environment / secrets
+# 1. Secrets & Environment Files
 .env
 .env.*
 !.env.example
 !.env.template
-
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Package/build files
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Testing / coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-*.cover
-
-# Type checking / linting
-.mypy_cache/
-.pyright/
-.ruff_cache/
-.pylint.d/
-
-# Logs
-*.log
-logs/
-
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-# Temporary files
-*.tmp
-*.temp
-tmp/
-temp/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Local uploads / generated files
-uploads/
-reports/
-generated/
-storage/
-
-# Local vector / embedding data
-chroma/
-chroma_db/
-vector_store/
-embeddings/
-
-# Supabase local development
-.supabase/
-
-# Docker local data
-.docker/
-docker-data/
-docker-volumes/
-
-# Secrets / credentials
 *.pem
 *.key
 *.crt
@@ -99,12 +16,79 @@ docker-volumes/
 *.token
 *.secret
 *.credentials
-
-# Service account credentials
 service-account*.json
 *-service-account.json
 
-# Local AI files
+# 2. Virtual Environments (Critical: host venv must never be pushed)
+.venv/
+venv/
+env/
+ENV/
+
+# 3. Python Compiled & Cache Files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 4. Packaging & Build Outputs
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 5. Testing & Coverage Artifacts
+tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# 6. Linters & Type-Check Caches
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.pylint.d/
+
+# 7. Logs & Temporary Files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 8. Local Databases & Storage
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+reports/
+generated/
+storage/
+chroma/
+chroma_db/
+vector_store/
+embeddings/
+
+# 9. IDE & OS Metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 10. Local Development Tooling
+.supabase/
+.docker/
+docker-data/
+docker-volumes/
+.ipynb_checkpoints/
 .ai/
 .ai-cache/
 .agent-cache/

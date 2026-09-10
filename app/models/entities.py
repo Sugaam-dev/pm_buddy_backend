@@ -443,3 +443,25 @@ class Notification(Base):
     read_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
+
+# -----------------------------------------------------------------------------
+# 13. Tenant AI Configuration
+# -----------------------------------------------------------------------------
+class TenantAIConfig(Base):
+    __tablename__ = "tenant_ai_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    provider = Column(String(50), default="google_gemini", nullable=False)
+    encrypted_api_key = Column(Text, nullable=False)
+    key_fingerprint = Column(String(100), nullable=False)
+    status = Column(String(50), default="connected", nullable=False)
+    last_verified_at = Column(DateTime(timezone=True), default=utc_now)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
+
+    __table_args__ = (UniqueConstraint("organization_id", "provider", name="uq_tenant_ai_config"),)
+
+

@@ -28,19 +28,9 @@ MONTHS = {
     "december": 12, "dec": 12,
 }
 
-NAME_TO_EMAIL = {
-    "rahul": "rahul@acme.com",
-    "rahul.arch@acme.com": "rahul@acme.com",
-    "alice": "alice@acme.com",
-    "alice.pm@acme.com": "alice@acme.com",
-    "bob": "bob@acme.com",
-    "bob.lead@acme.com": "bob@acme.com",
-    "charlie": "charlie@acme.com",
-    "charlie.cto@acme.com": "charlie@acme.com",
-    "sarah": "sarah@acme.com",
-    "sarah.admin@acme.com": "sarah@acme.com",
-    "dave": "dave@acme.com",
-}
+# Organization-specific attendee resolution is performed authoritatively by AttendeeResolver
+NAME_TO_EMAIL: dict[str, str] = {}
+
 
 
 def parse_meeting_intent(prompt: str, now: Optional[datetime] = None) -> dict[str, Any]:
@@ -53,10 +43,17 @@ def parse_meeting_intent(prompt: str, now: Optional[datetime] = None) -> dict[st
 
     # 1. Parse Duration
     duration_minutes = 30
-    dur_match = re.search(r"(\d+)\s*(?:min|minute|m\b)s?", lower)
-    if dur_match:
+    dur_hr_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?\b", lower)
+    dur_min_match = re.search(r"(\d+)\s*(?:min|minute|m\b)s?", lower)
+    if dur_hr_match:
         try:
-            duration_minutes = int(dur_match.group(1))
+            hrs = float(dur_hr_match.group(1))
+            duration_minutes = int(hrs * 60)
+        except ValueError:
+            pass
+    elif dur_min_match:
+        try:
+            duration_minutes = int(dur_min_match.group(1))
         except ValueError:
             pass
     elif "1 hour" in lower or "one hour" in lower or "1 hr" in lower:
@@ -235,43 +232,61 @@ def parse_meeting_intent(prompt: str, now: Optional[datetime] = None) -> dict[st
     end_dt = start_dt + timedelta(minutes=duration_minutes)
 
     # 4. Parse Attendees
-    attendees = ["alice@acme.com"]
-
-    # Check team keywords
-    if any(k in lower for k in ["dev team", "development team", "engineering team", "eng team", "developers", "engineers", "tech team"]):
-        for dev_email in ["rahul@acme.com", "bob@acme.com"]:
-            if dev_email not in attendees:
-                attendees.append(dev_email)
-
-    found_emails = re.findall(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", lower)
+    raw_attendees: list[str] = []
+    found_emails = re.findall(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", prompt)
     for email in found_emails:
-        norm = NAME_TO_EMAIL.get(email.lower(), email.lower())
-        if norm not in attendees:
-            attendees.append(norm)
+        if email.lower() not in [a.lower() for a in raw_attendees]:
+            raw_attendees.append(email.lower())
 
-    for name, email in NAME_TO_EMAIL.items():
-        if "@" not in name and re.search(rf"\b{name}\b", lower):
-            if email not in attendees:
-                attendees.append(email)
+    # Extract participant names following 'with', 'between', 'invite', or 'sync with'
+    name_clause = re.search(
+        r"\b(?:with|between|invite|sync with)\s+(.+?)(?=\s+(?:for\b|about\b|regarding\b|the title\b|title\b|titled\b|on\s+\d|at\s+\d|from\b|by\b|tomorrow|today|next|this|$|\.))",
+        prompt,
+        re.IGNORECASE,
+    )
+    if name_clause:
+        matched_phrase = name_clause.group(1).strip()
+        # Split on commas, "and", "&", or whitespace
+        delimiters = r",|\band\b|&|\s+"
+        tokens = [t.strip("\"' .,") for t in re.split(delimiters, matched_phrase) if t.strip("\"' .,")]
+        stop_words = {"a", "an", "the", "one", "meeting", "sync", "team", "brief", "catchup", "call"}
+        for t in tokens:
+            if t.lower() not in stop_words and len(t) >= 2:
+                if t.lower() not in [a.lower() for a in raw_attendees]:
+                    raw_attendees.append(t)
 
-    if len(attendees) == 1:
-        attendees.append("rahul@acme.com")
+    # Check for timezone
+    tz_match = re.search(r"\b(utc|gmt|ist|est|edt|cst|cdt|pst|pdt)\b", lower)
+    explicit_timezone = tz_match.group(1).upper() if tz_match else None
 
     # 5. Parse Title
     title = None
 
-    # Check for "for <topic>" or "about <topic>" or "regarding <topic>"
-    topic_match = re.search(
-        r"\b(?:for|about|regarding)\s+([a-zA-Z0-9\s/&_-]{3,40}?)(?=\s+(?:on\s+\d|at\s+\d|with\b|from\b|by\b|tomorrow|today|next|this|$|\.))",
+    # Check for "title of the meeting is <title>" or "title is <title>" or "titled <title>"
+    title_explicit_match = re.search(
+        r"\b(?:title\s+(?:of\s+(?:the\s+)?meeting\s+)?is|titled|named)\s+([a-zA-Z0-9\s/&_-]{2,40}?)(?=\s+(?:on\s+\d|at\s+\d|with\b|from\b|by\b|tomorrow|today|next|this|$|\.))",
         prompt,
         re.IGNORECASE,
     )
-    if topic_match:
-        extracted = topic_match.group(1).strip()
+    if title_explicit_match:
+        extracted = title_explicit_match.group(1).strip()
         extracted = re.sub(r"^(?:a|an|the)\s+", "", extracted, flags=re.IGNORECASE).strip()
-        stop_words = {"tomorrow", "today", "yesterday", "next week", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
-        if extracted.lower() not in stop_words and len(extracted) >= 3:
+        if len(extracted) >= 2:
             title = extracted.title()
+
+    if not title:
+        # Check for "for <topic>" or "about <topic>" or "regarding <topic>"
+        topic_match = re.search(
+            r"\b(?:for|about|regarding)\s+([a-zA-Z0-9\s/&_-]{3,40}?)(?=\s+(?:on\s+\d|at\s+\d|with\b|from\b|by\b|tomorrow|today|next|this|$|\.))",
+            prompt,
+            re.IGNORECASE,
+        )
+        if topic_match:
+            extracted = topic_match.group(1).strip()
+            extracted = re.sub(r"^(?:a|an|the)\s+", "", extracted, flags=re.IGNORECASE).strip()
+            stop_words = {"tomorrow", "today", "yesterday", "next week", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+            if extracted.lower() not in stop_words and len(extracted) >= 3:
+                title = extracted.title()
 
     if not title:
         if "requirement" in lower or "requirements" in lower:
@@ -293,19 +308,19 @@ def parse_meeting_intent(prompt: str, now: Optional[datetime] = None) -> dict[st
         elif any(k in lower for k in ["dev team", "development team", "engineering team"]):
             title = "Dev Team Sync"
         else:
-            other_attendees = [a for a in attendees if a != "alice@acme.com"]
-            if other_attendees:
-                name_part = other_attendees[0].split("@")[0].capitalize()
-                title = f"Meeting with {name_part}"
+            if raw_attendees:
+                title = f"Meeting with {raw_attendees[0].capitalize()}"
             else:
-                title = "Project Review"
+                title = "Team Meeting"
 
     return {
         "title": title,
         "start_time": start_dt.isoformat(),
         "end_time": end_dt.isoformat(),
         "duration_minutes": duration_minutes,
-        "attendees": attendees,
+        "attendees": raw_attendees,
+        "raw_attendees": raw_attendees,
+        "explicit_timezone": explicit_timezone,
         "has_explicit_time": has_explicit_time,
         "has_explicit_date": has_explicit_date,
     }

@@ -1,33 +1,52 @@
-﻿# Git
-.git
+# ================================================
+# PM Buddy Backend - .dockerignore
+# Keeps production backend images slim, secure, and fast
+# ================================================
+
+# 1. Git & Version Control
+.git/
 .gitignore
 
-# Python virtual environment (critical: host venv must never be copied into container)
+# 2. Python Virtual Environment (CRITICAL: host venv must never enter container)
 .venv/
 venv/
 env/
 ENV/
 
-# Python cache & compiled files
+# 3. Python Cache & Compiled Artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-# Testing & coverage artifacts
+# 4. Testing, Coverage & Quality Assurance
 tests/
 .pytest_cache/
 .coverage
 .coverage.*
 htmlcov/
 coverage.xml
+.mypy_cache/
+.ruff_cache/
+.pyright/
 
-# Local secrets & environment files
+# 5. Local Secrets & Environment Files
 .env
 .env.*
 !.env.example
+!.env.template
+*.pem
+*.key
+*.token
+*.credentials
 
-# IDE & OS temporary files
+# 6. Build Artifacts & Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 7. IDE & OS Metadata
 .vscode/
 .idea/
 *.swp
@@ -37,9 +56,14 @@ coverage.xml
 Thumbs.db
 desktop.ini
 
-# Logs & temporary runtime files
+# 8. Logs & Temporary Runtime Files
 *.log
 logs/
 tmp/
 temp/
 *.tmp
+*.temp
+uploads/
+storage/
+*.db
+*.sqlite3

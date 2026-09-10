@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +70,7 @@ async def list_calendar_events(
     user: CurrentTenantUser = Depends(require_permission("calendar.read")),
     db: AsyncSession = Depends(get_db),
 ):
+    target_email = user_email or user.email
     return await CalendarService.list_events(
         session=db,
         organization_id=user.organization_id,
@@ -77,7 +78,8 @@ async def list_calendar_events(
         end_time=end_time,
         project_id=project_id,
         status_filter=status,
-        user_email=user_email,
+        user_email=target_email,
+        user_id=user.user_id,
     )
 
 
@@ -91,6 +93,8 @@ async def get_calendar_event(
         session=db,
         organization_id=user.organization_id,
         event_id=event_id,
+        user_email=user.email,
+        user_id=user.user_id,
     )
 
 
@@ -100,6 +104,12 @@ async def create_calendar_event(
     user: CurrentTenantUser = Depends(require_permission("calendar.write")),
     db: AsyncSession = Depends(get_db),
 ):
+    if user.role_name in ("client_operator", "client_ai_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct calendar mutation is restricted for client users. Please schedule and manage meetings via PM Buddy AI with Human-In-The-Loop review."
+        )
+
     res = await CalendarService.create_event(
         session=db,
         organization_id=user.organization_id,
@@ -126,6 +136,12 @@ async def update_calendar_event(
     user: CurrentTenantUser = Depends(require_permission("calendar.write")),
     db: AsyncSession = Depends(get_db),
 ):
+    if user.role_name in ("client_operator", "client_ai_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct calendar modification is restricted for client users. Please manage meetings via PM Buddy AI with Human-In-The-Loop review."
+        )
+
     updates = req.model_dump(exclude_unset=True)
     res = await CalendarService.update_event(
         session=db,
@@ -146,6 +162,12 @@ async def cancel_calendar_event(
     user: CurrentTenantUser = Depends(require_permission("calendar.write")),
     db: AsyncSession = Depends(get_db),
 ):
+    if user.role_name == "client_operator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct calendar cancellation is restricted for client operators. Please cancel meetings via PM Buddy AI with Human-In-The-Loop review."
+        )
+
     reason = req.reason if req else "Cancelled by user"
     res = await CalendarService.cancel_event(
         session=db,

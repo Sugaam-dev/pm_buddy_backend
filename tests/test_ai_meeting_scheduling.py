@@ -283,7 +283,7 @@ async def test_cross_tenant_meeting_rejected():
                 "title": "Cross Tenant Security Leak Test",
                 "start_time": start.isoformat(),
                 "end_time": end.isoformat(),
-                "attendee_emails": ["alice@acme.com", "bob@globex.com"],
+                "attendee_emails": ["pm@pmrgsolution.com", "admin@nextgen.com"],
             },
             expires_in_minutes=15,
         )

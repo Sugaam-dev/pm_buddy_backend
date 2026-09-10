@@ -4,7 +4,11 @@ import math
 from abc import ABC, abstractmethod
 import os
 from typing import Optional
-import google.generativeai as genai
+import warnings
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    import google.generativeai as genai
 
 from app.core.config import settings
 

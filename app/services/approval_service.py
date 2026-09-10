@@ -19,7 +19,7 @@ class ApprovalService:
     ) -> list[dict[str, Any]]:
         stmt = (
             select(Approval, Project.name.label("project_name"), Project.key.label("project_key"))
-            .join(Project, Approval.project_id == Project.id)
+            .outerjoin(Project, Approval.project_id == Project.id)
             .where(
                 Approval.organization_id == organization_id,
                 Approval.status == status

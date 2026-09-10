@@ -28,7 +28,10 @@ class TicketService:
         if severity:
             stmt = stmt.where(Ticket.severity == severity)
         if status:
-            stmt = stmt.where(Ticket.status == status)
+            if status.lower() in ("open", "all_open"):
+                stmt = stmt.where(Ticket.status.in_(["open", "new", "in_progress", "escalated"]))
+            else:
+                stmt = stmt.where(Ticket.status == status)
 
         result = await session.execute(stmt)
         tickets = result.scalars().all()
@@ -54,6 +57,7 @@ class TicketService:
                 "breach_risk_score": t.breach_risk_score,
                 "probable_cause": t.probable_cause,
                 "suggested_resolution": t.suggested_resolution,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
             })
 
         return output
@@ -153,6 +157,7 @@ class TicketService:
         severity: str = "high",
         priority: str = "P2",
         category: str = "Infrastructure",
+        status: str = "new",
         affected_service: str | None = None,
         assignee_id: UUID | None = None,
         project_id: UUID | None = None,
@@ -161,25 +166,28 @@ class TicketService:
         """Creates a new incident/support ticket with SLA tracking."""
         from datetime import timedelta
 
-        # Normalize severity and priority
-        sev_clean = severity.lower() if severity in ["critical", "high", "medium", "low"] else "high"
-        prio_clean = priority.upper() if priority and priority.upper() in ["P0", "P1", "P2", "P3"] else "P2"
-
-        if "p0" in severity.lower() or prio_clean == "P0":
+        # Normalize severity and priority supporting natural language inputs
+        norm_combined = f"{severity} {priority}".lower().strip()
+        if any(term in norm_combined for term in ["p0", "priority 0", "critical priority", "critical"]):
             sev_clean = "critical"
             prio_clean = "P0"
             default_sla = 4
-        elif "p1" in severity.lower() or prio_clean == "P1":
+        elif any(term in norm_combined for term in ["p1", "priority 1", "high priority"]):
             sev_clean = "critical"
             prio_clean = "P1"
             default_sla = 8
-        elif "p3" in severity.lower() or prio_clean == "P3":
+        elif any(term in norm_combined for term in ["p3", "priority 3", "low priority", "low", "routine"]):
             sev_clean = "medium"
             prio_clean = "P3"
             default_sla = 48
-        else:
-            sev_clean = "high" if prio_clean == "P2" else sev_clean
+        elif any(term in norm_combined for term in ["p2", "priority 2", "medium priority"]):
+            sev_clean = "high"
+            prio_clean = "P2"
             default_sla = 24
+        else:
+            sev_clean = severity.lower() if severity in ["critical", "high", "medium", "low"] else "high"
+            prio_clean = priority.upper() if priority and priority.upper() in ["P0", "P1", "P2", "P3"] else "P2"
+            default_sla = 4 if prio_clean == "P0" else (8 if prio_clean == "P1" else (48 if prio_clean == "P3" else 24))
 
         hours = sla_hours or default_sla
         now = datetime.now(timezone.utc)
@@ -190,9 +198,23 @@ class TicketService:
         count = len((await session.execute(count_stmt)).scalars().all())
         ticket_number = f"INC-{count + 101}"
 
-        # If project_id not provided, pick first project
-        if not project_id:
-            from app.models.entities import Project
+        from app.models.entities import Project
+        # Validate project_id belongs to the authenticated organization
+        if project_id:
+            proj_valid = (await session.execute(
+                select(Project.id).where(
+                    Project.id == project_id,
+                    Project.organization_id == organization_id,
+                    Project.deleted_at.is_(None),
+                )
+            )).scalar_one_or_none()
+            if not proj_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Project not found or does not belong to your organization."
+                )
+        else:
+            # Pick first active project in organization
             proj_stmt = (
                 select(Project.id)
                 .where(
@@ -212,7 +234,7 @@ class TicketService:
             category=category,
             severity=sev_clean,
             priority=prio_clean,
-            status="open",
+            status=status or "new",
             affected_service=affected_service,
             assignee_id=assignee_id,
             sla_due_at=sla_due_at,
@@ -224,6 +246,7 @@ class TicketService:
         sla_info = SLAEngine.evaluate_status(ticket.created_at, ticket.sla_due_at, now=now)
         return {
             "id": str(ticket.id),
+            "organization_id": str(ticket.organization_id),
             "ticket_number": ticket.ticket_number,
             "title": ticket.title,
             "description": ticket.description,
@@ -239,5 +262,70 @@ class TicketService:
             "breach_risk_score": ticket.breach_risk_score,
             "probable_cause": ticket.probable_cause,
             "suggested_resolution": ticket.suggested_resolution,
+            "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
         }
+
+    @staticmethod
+    async def update_ticket_status(
+        session: AsyncSession,
+        organization_id: UUID,
+        ticket_id: UUID,
+        status: str,
+    ) -> dict[str, Any] | None:
+        stmt = select(Ticket).where(
+            Ticket.id == ticket_id,
+            Ticket.organization_id == organization_id,
+            Ticket.deleted_at.is_(None),
+        )
+        ticket = (await session.execute(stmt)).scalar_one_or_none()
+        if not ticket:
+            return None
+        ticket.status = status
+        if status.lower() in ("resolved", "closed"):
+            ticket.resolved_at = datetime.now(timezone.utc)
+        await session.flush()
+        await session.commit()
+        return {"id": str(ticket.id), "status": ticket.status}
+
+    @staticmethod
+    async def get_ticket(
+        session: AsyncSession,
+        organization_id: UUID,
+        ticket_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Fetches a single ticket with full details, strictly scoped to organization_id."""
+        stmt = select(Ticket).where(
+            Ticket.id == ticket_id,
+            Ticket.organization_id == organization_id,
+            Ticket.deleted_at.is_(None),
+        )
+        ticket = (await session.execute(stmt)).scalar_one_or_none()
+        if not ticket:
+            return None
+
+        now = datetime.now(timezone.utc)
+        sla_info = SLAEngine.evaluate_status(ticket.created_at, ticket.sla_due_at, now=now)
+        return {
+            "id": str(ticket.id),
+            "ticket_number": ticket.ticket_number,
+            "title": ticket.title,
+            "description": ticket.description,
+            "category": ticket.category,
+            "severity": ticket.severity,
+            "priority": ticket.priority,
+            "status": ticket.status,
+            "affected_service": ticket.affected_service,
+            "assignee_id": str(ticket.assignee_id) if ticket.assignee_id else None,
+            "sla_status": sla_info["status"].value,
+            "is_breached": sla_info["is_breached"],
+            "sla_due_at": ticket.sla_due_at.isoformat(),
+            "first_response_at": ticket.first_response_at.isoformat() if ticket.first_response_at else None,
+            "resolved_at": ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+            "breach_risk_score": ticket.breach_risk_score,
+            "probable_cause": ticket.probable_cause,
+            "suggested_resolution": ticket.suggested_resolution,
+            "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
+            "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
+        }
+
 

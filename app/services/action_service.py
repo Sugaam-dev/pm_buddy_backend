@@ -40,6 +40,7 @@ class ActionService:
         action_type: str,
         payload: dict[str, Any],
         expires_in_minutes: int = 15,
+        user_id: UUID | None = None,
     ) -> dict[str, Any]:
         action_id = uuid4()
         now = datetime.now(timezone.utc)
@@ -52,11 +53,11 @@ class ActionService:
             )
         )).scalar_one_or_none()
         if not conv:
-            dummy_user_id = UUID("10000000-0000-0000-0000-000000000001")
+            creator_id = user_id or UUID("10000000-0000-0000-0000-000000000001")
             new_conv = AIConversation(
                 id=conversation_id,
                 organization_id=organization_id,
-                user_id=dummy_user_id,
+                user_id=creator_id,
                 persona="pm_buddy",
                 title="PM Buddy Session",
             )
@@ -109,16 +110,37 @@ class ActionService:
         if not action:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
 
-        # RBAC Check: Ensure the user has the domain permission for the proposed action
+        # 1. RBAC Check: Ensure the user has the domain permission for the proposed action
         if user_permissions is not None:
             has_perm = "*" in user_permissions or "admin" in user_permissions
             if not has_perm:
+                has_broad_execute = "action.execute" in user_permissions
+                has_meeting_confirm = "calendar.meeting.confirm" in user_permissions
+
+                # If user lacks broad action.execute, they can ONLY confirm calendar meeting actions with calendar.meeting.confirm
+                if not has_broad_execute:
+                    if action.action_type in ("create_calendar_meeting", "update_calendar_meeting", "cancel_calendar_meeting"):
+                        if not has_meeting_confirm:
+                            raise HTTPException(
+                                status_code=status.HTTP_403_FORBIDDEN,
+                                detail="User lacks required domain permission: missing 'calendar.meeting.confirm' or 'action.execute'."
+                            )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Action execution forbidden: 'calendar.meeting.confirm' permission can only execute calendar meeting actions, not '{action.action_type}'."
+                        )
+
                 if action.action_type in ("create_calendar_meeting", "update_calendar_meeting", "cancel_calendar_meeting"):
-                    has_perm = "calendar.write" in user_permissions
-                elif action.action_type in ("assign_ticket", "create_ticket"):
-                    has_perm = "ticket.write" in user_permissions or "ticket.assign" in user_permissions
-                elif action.action_type in ("send_escalation", "approve_gate"):
-                    has_perm = "approval.write" in user_permissions or "approval.approve" in user_permissions
+                    has_perm = "calendar.write" in user_permissions or has_meeting_confirm
+                elif action.action_type == "assign_ticket":
+                    has_perm = "ticket.assign" in user_permissions
+                elif action.action_type == "create_ticket":
+                    has_perm = "ticket.write" in user_permissions or "ticket.create" in user_permissions
+                elif action.action_type == "send_escalation":
+                    has_perm = "approval.write" in user_permissions
+                elif action.action_type == "approve_gate":
+                    has_perm = "approval.approve" in user_permissions or "approval.write" in user_permissions
                 elif action.action_type == "change_project_status":
                     has_perm = "project.write" in user_permissions
                 elif action.action_type in ("create_task", "update_task"):
@@ -127,7 +149,22 @@ class ActionService:
             if not has_perm:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"User lacks required domain permission to execute action '{action.action_type}'."
+                    detail=f"User lacks required domain permission to confirm '{action.action_type}'.",
+                )
+
+        # 2. Verify proposal ownership (proposal must belong to user unless admin)
+        conv = (await session.execute(
+            select(AIConversation).where(
+                AIConversation.id == action.conversation_id,
+                AIConversation.organization_id == organization_id,
+            )
+        )).scalar_one_or_none()
+        if conv and hasattr(conv, "user_id") and conv.user_id != user_id:
+            is_admin = "*" in (user_permissions or []) or "admin" in (user_permissions or [])
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Action proposal ownership violation: You may only confirm actions proposed within your own session."
                 )
 
         now = datetime.now(timezone.utc)

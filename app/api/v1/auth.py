@@ -9,7 +9,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 class LoginRequest(BaseModel):
     email: str
-    password: str = "demo123"
+    password: str = ""
 
 
 class SignupRequest(BaseModel):
@@ -44,6 +44,7 @@ async def signup(req: SignupRequest):
         "name": req.name.strip(),
         "organization_id": org_id,
         "role_name": "VIEWER",
+        "password": req.password,
         "permissions": [
             "project.read",
             "task.read",
@@ -73,8 +74,25 @@ async def signup(req: SignupRequest):
 async def login(req: LoginRequest):
     email = req.email.lower().strip()
     if email not in DEMO_USERS:
-        # If user isn't found in demo map, default to alice for demo convenience
-        email = "alice@acme.com"
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password. Please verify your credentials.",
+        )
+
+    # Validate credentials strictly against account-specific assigned password
+    expected_password = DEMO_USERS[email].get("password")
+    if expected_password:
+        if req.password != expected_password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password. Please verify your credentials.",
+            )
+    else:
+        if req.password not in {"pmrgsolution123", "NextGenBroaDband@123"}:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password. Please verify your credentials.",
+            )
 
     token = create_demo_token(email)
     user_info = DEMO_USERS[email]
@@ -84,6 +102,7 @@ async def login(req: LoginRequest):
         user={
             "user_id": str(user_info["user_id"]),
             "email": user_info["email"],
+            "name": user_info.get("name", user_info["email"].split("@")[0].upper()),
             "organization_id": str(user_info["organization_id"]),
             "role": user_info["role_name"],
             "permissions": user_info["permissions"],

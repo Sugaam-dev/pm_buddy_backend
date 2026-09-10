@@ -2,7 +2,7 @@ import base64
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, UploadFile, File, Form, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -30,6 +30,8 @@ class KnowledgeSearchRequest(BaseModel):
 
 
 class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     organization_id: UUID
     project_id: Optional[UUID]
@@ -40,9 +42,6 @@ class DocumentResponse(BaseModel):
     source_url: Optional[str]
     status: str
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 @router.get("/documents", response_model=List[DocumentResponse])

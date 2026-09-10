@@ -20,7 +20,7 @@ class TaskService:
     ) -> list[dict[str, Any]]:
         stmt = (
             select(Task, Project.health)
-            .join(Project, Task.project_id == Project.id)
+            .outerjoin(Project, Task.project_id == Project.id)
             .where(
                 Task.organization_id == organization_id,
                 Task.deleted_at.is_(None)
@@ -127,3 +127,23 @@ class TaskService:
             "is_blocked": new_task.is_blocked,
             "blocker_reason": new_task.blocker_reason,
         }
+
+    @staticmethod
+    async def update_task_status(
+        session: AsyncSession,
+        organization_id: UUID,
+        task_id: UUID,
+        status: str,
+    ) -> dict[str, Any] | None:
+        stmt = select(Task).where(
+            Task.id == task_id,
+            Task.organization_id == organization_id,
+            Task.deleted_at.is_(None),
+        )
+        task = (await session.execute(stmt)).scalar_one_or_none()
+        if not task:
+            return None
+        task.status = status
+        await session.flush()
+        await session.commit()
+        return {"id": str(task.id), "status": task.status}

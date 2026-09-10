@@ -5,6 +5,7 @@ from sqlalchemy import text
 import structlog
 
 from app.api.v1.actions import router as actions_router
+from app.api.v1.ai_config import router as ai_config_router
 from app.api.v1.approvals import router as approvals_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.calendar import router as calendar_router
@@ -63,6 +64,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security Headers & Information Disclosure Protection Middleware
+@app.middleware("http")
+async def apply_security_headers_and_shield(request, call_next):
+    try:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+    except Exception as e:
+        logger.error("unhandled_server_exception", path=request.url.path, error=str(e))
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "An internal server error occurred. Please contact system support."},
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+            },
+        )
+
 # Health & Readiness
 @app.get("/health", tags=["Observability"])
 async def health():
@@ -88,6 +111,7 @@ async def readiness():
 
 # Include V1 API Routers
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(ai_config_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")

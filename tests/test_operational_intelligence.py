@@ -65,10 +65,7 @@ async def test_project_health_engine_deterministic_score():
         assert health_degraded["status"] in ("at_risk", "critical")
         assert len(health_degraded["factors"]) >= 2
 
-        # Cleanup
-        await session.delete(breached_ticket)
-        await session.delete(crit_risk)
-        await session.delete(proj)
+        # Cleanup via cascade
         await session.delete(org)
         await session.commit()
 
@@ -122,7 +119,6 @@ async def test_action_recommendations():
         assert len(recs) >= 1
         assert any("propose_escalation" in r["action_type"] for r in recs)
 
-        await session.delete(ticket)
-        await session.delete(proj)
+        # Cleanup via cascade
         await session.delete(org)
         await session.commit()

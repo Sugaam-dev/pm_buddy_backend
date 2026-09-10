@@ -43,9 +43,7 @@ async def test_global_search_across_entities():
         assert "projects" in search_res["results"]
         assert "tasks" in search_res["results"]
 
-        # Cleanup
-        await session.delete(task)
-        await session.delete(proj)
+        # Cleanup via cascade
         await session.delete(org)
         await session.commit()
 
@@ -79,7 +77,7 @@ async def test_global_search_tenant_isolation():
         )
         assert search_a["total_results"] == 0
 
-        await session.delete(proj_b)
+        # Cleanup via cascade
         await session.delete(o_a)
         await session.delete(o_b)
         await session.commit()

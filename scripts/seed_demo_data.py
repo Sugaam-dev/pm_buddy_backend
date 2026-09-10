@@ -63,12 +63,12 @@ async def seed_data():
         """)
 
         # 2. Organizations
-        print("Inserting Organizations...")
+        print("Inserting Organizations (PMRG Solution & NextGen)...")
         await raw_conn.driver_connection.execute("""
             INSERT INTO organizations (id, name, slug, plan, settings) VALUES
-            ('11111111-1111-1111-1111-111111111111', 'Acme Corp', 'acme-corp', 'enterprise', '{"sla_strict_mode": true, "auto_assign_tickets": false}'),
-            ('22222222-2222-2222-2222-222222222222', 'Globex Systems', 'globex-sys', 'enterprise', '{"sla_strict_mode": false, "auto_assign_tickets": true}')
-            ON CONFLICT (id) DO NOTHING;
+            ('11111111-1111-1111-1111-111111111111', 'PMRG Solution', 'pmrg-solution', 'enterprise', '{"sla_strict_mode": true, "auto_assign_tickets": false}'),
+            ('22222222-2222-2222-2222-222222222222', 'NextGen', 'nextgen', 'enterprise', '{"sla_strict_mode": false, "auto_assign_tickets": true}')
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, settings = EXCLUDED.settings;
         """)
 
         # 3. Roles & Permissions
@@ -81,7 +81,9 @@ async def seed_data():
             ('dddddddd-dddd-dddd-dddd-dddddddddddd', NULL, 'CEO', 'Chief Executive Officer', true),
             ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', NULL, 'TEAM_LEAD', 'Technical Team Lead', true),
             ('ffffffff-ffff-ffff-ffff-ffffffffffff', NULL, 'ENGINEER', 'Software / DevOps Engineer', true),
-            ('99999999-9999-9999-9999-999999999999', NULL, 'VIEWER', 'Read-Only Stakeholder', true)
+            ('99999999-9999-9999-9999-999999999999', NULL, 'VIEWER', 'Read-Only Stakeholder', true),
+            ('88888888-8888-8888-8888-888888888888', NULL, 'CLIENT_AI_ADMIN', 'Client AI Administrator', true),
+            ('77777777-7777-7777-7777-777777777777', NULL, 'CLIENT_OPERATOR', 'Client Operator', true)
             ON CONFLICT (id) DO NOTHING;
 
             INSERT INTO permissions (id, code, description, module) VALUES
@@ -107,10 +109,16 @@ async def seed_data():
             SELECT 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', id FROM permissions ON CONFLICT DO NOTHING;
             INSERT INTO role_permissions (role_id, permission_id)
             SELECT 'cccccccc-cccc-cccc-cccc-cccccccccccc', id FROM permissions ON CONFLICT DO NOTHING;
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT '88888888-8888-8888-8888-888888888888', id FROM permissions ON CONFLICT DO NOTHING;
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT '77777777-7777-7777-7777-777777777777', id FROM permissions 
+            WHERE code IN ('project.read', 'task.read', 'ticket.read', 'ticket.create', 'ticket.write', 'calendar.read', 'calendar.write', 'action.execute', 'risk.read', 'knowledge.read', 'ai.chat')
+            ON CONFLICT DO NOTHING;
         """)
 
         # 4. Organization Members
-        print("Inserting Organization Members (Admin, PM, Team Lead, Engineer, Viewer)...")
+        print("Inserting Organization Members (PMRG Team & NextGen Admin/Operator)...")
         await raw_conn.driver_connection.execute("""
             INSERT INTO organization_members (id, organization_id, user_id, role_id, status) VALUES
             ('1a000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000001', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'active'),
@@ -119,18 +127,19 @@ async def seed_data():
             ('1a000001-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000004', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'active'),
             ('1a000001-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000005', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 'active'),
             ('1a000001-0000-0000-0000-000000000009', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000009', '99999999-9999-9999-9999-999999999999', 'active'),
-            ('1a000002-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', '20000000-0000-0000-0000-000000000001', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'active')
+            ('1a000002-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', '20000000-0000-0000-0000-000000000001', '88888888-8888-8888-8888-888888888888', 'active'),
+            ('1a000002-0000-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222', '20000000-0000-0000-0000-000000000002', '77777777-7777-7777-7777-777777777777', 'active')
             ON CONFLICT DO NOTHING;
         """)
 
         # 5. Projects (At least 3 projects)
-        print("Inserting Projects (Customer Portal Revamp, Mobile App Release, Payment Infrastructure)...")
+        print("Inserting Projects (Customer Portal Revamp, Mobile App Release, Payment Infrastructure, NextGen Network)...")
         await raw_conn.driver_connection.execute("""
             INSERT INTO projects (id, organization_id, name, key, description, status, health, owner_id, budget, spent, target_date) VALUES
             ('a0000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'Customer Portal Revamp', 'PORTAL', 'Full redesign and modern stack migration of enterprise self-service customer portal.', 'active', 'at_risk', '10000000-0000-0000-0000-000000000001', 450000.00, 380000.00, now() + interval '30 days'),
             ('a0000001-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'Mobile App Release', 'MOBILE', 'Cross-platform iOS and Android release for frictionless customer self-management.', 'active', 'on_track', '10000000-0000-0000-0000-000000000001', 280000.00, 140000.00, now() + interval '60 days'),
             ('a0000001-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Payment Infrastructure', 'PAY', 'Zero-downtime PCI-DSS compliance upgrade and multi-gateway routing architecture.', 'active', 'critical', '10000000-0000-0000-0000-000000000001', 600000.00, 540000.00, now() + interval '15 days'),
-            ('b0000001-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'Globex Secure Gateway', 'SEC', 'Zero Trust Perimeter Deployment', 'active', 'on_track', '20000000-0000-0000-0000-000000000001', 180000.00, 45000.00, now() + interval '90 days')
+            ('b0000001-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'NextGen Broadband Network Operations', 'NXG', 'High-speed fiber rollout and zero-trust gateway infrastructure', 'active', 'on_track', '20000000-0000-0000-0000-000000000001', 350000.00, 85000.00, now() + interval '90 days')
             ON CONFLICT (id) DO NOTHING;
         """)
 
@@ -259,19 +268,20 @@ async def seed_data():
         print("Inserting Calendar Connections & Events (Conflicting events, Available slots)...")
         await raw_conn.driver_connection.execute("""
             INSERT INTO calendar_connections (id, organization_id, user_id, provider, calendar_email, is_active) VALUES
-            ('8a000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000001', 'local', 'alice.pm@acme.com', true),
-            ('8a000001-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000005', 'local', 'rahul.arch@acme.com', true)
-            ON CONFLICT DO NOTHING;
+            ('8a000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000001', 'local', 'pm@pmrgsolution.com', true),
+            ('8a000001-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', '10000000-0000-0000-0000-000000000005', 'local', 'engineer@pmrgsolution.com', true),
+            ('8a000002-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', '20000000-0000-0000-0000-000000000001', 'local', 'admin@nextgen.com', true)
+            ON CONFLICT (id) DO NOTHING;
 
             -- Event 1: Morning Standup (Today 09:00 - 09:30 UTC)
             INSERT INTO calendar_events (id, organization_id, connection_id, external_event_id, title, description, start_time, end_time, attendees, status) VALUES
-            ('7a000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000001', 'local_evt_001', 'Daily Core Platform Standup', 'Review active blockers and incident triage', now() - interval '1 hour', now() - interval '30 minutes', '["alice.pm@acme.com", "bob.lead@acme.com", "rahul.arch@acme.com"]', 'confirmed'),
+            ('7a000001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000001', 'local_evt_001', 'Daily Core Platform Standup', 'Review active blockers and incident triage', now() - interval '1 hour', now() - interval '30 minutes', '["pm@pmrgsolution.com", "lead@pmrgsolution.com", "engineer@pmrgsolution.com"]', 'confirmed'),
             
             -- Event 2: Conflicting Event (Today 14:00 - 15:00 UTC) - Busy block
-            ('7a000001-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000005', 'local_evt_002', 'Q3 Cloud Cost Reduction Steering Committee', 'Executive review of GPU and database provisioning budget', now() + interval '3 hours', now() + interval '4 hours', '["rahul.arch@acme.com", "sarah.admin@acme.com"]', 'confirmed'),
+            ('7a000001-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000005', 'local_evt_002', 'Q3 Cloud Cost Reduction Steering Committee', 'Executive review of GPU and database provisioning budget', now() + interval '3 hours', now() + interval '4 hours', '["engineer@pmrgsolution.com", "admin@pmrgsolution.com"]', 'confirmed'),
             
             -- Event 3: Upcoming Tomorrow Strategy Meeting
-            ('7a000001-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000001', 'local_evt_003', 'Payment Infrastructure Incident Post-Mortem', 'Deep-dive review into checkout gateway 502 spike', now() + interval '1 day', now() + interval '1 day 1 hour', '["alice.pm@acme.com", "rahul.arch@acme.com", "charlie.cto@acme.com"]', 'confirmed')
+            ('7a000001-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', '8a000001-0000-0000-0000-000000000001', 'local_evt_003', 'Payment Infrastructure Incident Post-Mortem', 'Deep-dive review into checkout gateway 502 spike', now() + interval '1 day', now() + interval '1 day 1 hour', '["pm@pmrgsolution.com", "engineer@pmrgsolution.com", "cto@pmrgsolution.com"]', 'confirmed')
             ON CONFLICT (id) DO NOTHING;
         """)
 

@@ -15,7 +15,7 @@ class RiskService:
     ) -> list[dict[str, Any]]:
         stmt = (
             select(Risk, Project.name.label("project_name"))
-            .join(Project, Risk.project_id == Project.id)
+            .outerjoin(Project, Risk.project_id == Project.id)
             .where(Risk.organization_id == organization_id)
             .order_by((Risk.likelihood * Risk.impact).desc())
         )

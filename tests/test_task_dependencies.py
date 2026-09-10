@@ -71,12 +71,8 @@ async def test_dependency_creation_and_query():
             )
         assert "Circular dependency" in str(exc_info.value)
 
-        # Cleanup
+        # Cleanup via cascade
         await DependencyService.remove_dependency(session, org_id, dep1.id)
         await DependencyService.remove_dependency(session, org_id, dep2.id)
-        await session.delete(t3)
-        await session.delete(t2)
-        await session.delete(t1)
-        await session.delete(proj)
         await session.delete(org)
         await session.commit()

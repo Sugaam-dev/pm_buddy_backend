@@ -1,7 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -12,6 +12,8 @@ router = APIRouter(prefix="/notifications", tags=["In-App Notifications"])
 
 
 class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     organization_id: UUID
     user_id: Optional[UUID]
@@ -24,9 +26,6 @@ class NotificationResponse(BaseModel):
     action_link: Optional[str]
     is_read: bool
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 @router.get("")
